@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
+  <rect width="64" height="64" rx="18" fill="#e7d6b8"/>
+  <path d="M32 12 51 31 32 52 13 32 32 12Z" fill="#f8f3e9" stroke="#af795d" stroke-width="2"/>
+  <path d="m32 12 1 19-20 1m20-1 18 0-19 21" fill="none" stroke="#af795d" stroke-width="1.5"/>
+  <text x="32" y="39" text-anchor="middle" font-size="21" font-family="serif" fill="#895b49">折</text>
+</svg>
