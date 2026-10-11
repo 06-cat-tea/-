@@ -25,10 +25,15 @@ jobs:
         uses: actions/checkout@v6
       - name: Configure GitHub Pages
         uses: actions/configure-pages@v5
+      - name: Prepare public demo files
+        run: |
+          mkdir -p _site/novel-data
+          cp index.html sw.js manifest.webmanifest icon.svg _site/
+          cp novel-data/jinli.js _site/novel-data/
       - name: Upload static site
         uses: actions/upload-pages-artifact@v4
         with:
-          path: .
+          path: _site
       - name: Deploy site
         id: deployment
         uses: actions/deploy-pages@v4
