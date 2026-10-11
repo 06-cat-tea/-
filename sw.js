@@ -1,6 +1,10 @@
 const CACHE_PREFIX = "zhezhi-literature-";
-const CACHE_NAME = `${CACHE_PREFIX}demo-20261011`;
-const APP_SHELL = ["./index.html", "./manifest.webmanifest", "./icon.svg", "./novel-data/jinli.js?v=demo-20261011"];
+const CACHE_NAME = `${CACHE_PREFIX}system-20261012`;
+const APP_SHELL = [
+  "./index.html", "./manifest.webmanifest", "./icon.svg", "./novel-data/jinli.js?v=20261012",
+  "./assets/site.css?v=20261012", "./assets/upgrade.css?v=20261012",
+  "./assets/catalog.js?v=20261012", "./assets/store.js?v=20261012", "./assets/app.js?v=20261012"
+];
 
 self.addEventListener("install", event => {
   event.waitUntil(caches.open(CACHE_NAME).then(cache => cache.addAll(APP_SHELL)).then(() => self.skipWaiting()));

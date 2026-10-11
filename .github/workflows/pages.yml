@@ -30,6 +30,7 @@ jobs:
           mkdir -p _site/novel-data
           cp index.html sw.js manifest.webmanifest icon.svg _site/
           cp novel-data/jinli.js _site/novel-data/
+          cp -R assets _site/assets
       - name: Upload static site
         uses: actions/upload-pages-artifact@v4
         with:
