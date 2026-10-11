@@ -118,3 +118,51 @@ input[type=checkbox]{width:17px;height:17px;accent-color:var(--red);flex-shrink:
   .modal{padding:24px 20px}.modal-footer button{flex:1;white-space:nowrap}.undo-bar{font-size:12px;gap:10px;padding:9px 12px}
 }
 @media(max-width:360px){.reader-tools .reader-tool,.reader-tools .icon-button{min-width:28px;font-size:11px}.reader-top #exitReader{font-size:10px}.settings-fields{grid-template-columns:1fr}}
+
+/* Author tools share the site's paper palette and keep the writing surface stable. */
+.author-editing .author-intro,.author-editing .author-stats{display:none}
+.author-stats,.record-summary{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:16px;margin:22px 0 28px}
+.author-stats>div,.record-summary>div{min-width:0;padding:20px 22px;border:1px solid var(--line);background:var(--paper2);border-radius:5px}
+.author-stats small,.record-summary small{display:block;font-size:12px;color:var(--muted);margin-bottom:8px}
+.author-stats strong,.record-summary strong{display:block;font-size:21px;font-weight:500;line-height:1.5;overflow-wrap:anywhere}
+.daily-goal small{display:flex;align-items:center;justify-content:space-between;gap:8px}.daily-goal .quiet-button{padding:2px 8px;font-size:12px}
+.daily-goal progress,.writer-session progress{accent-color:#87967e;display:block;width:100%;height:6px;margin-top:12px;border:0;border-radius:10px;overflow:hidden}
+progress::-webkit-progress-bar{background:#e8e0d3}progress::-webkit-progress-value{background:#87967e}progress::-moz-progress-bar{background:#87967e}
+.author-tabs{display:flex;gap:24px;border-bottom:1px solid var(--line);margin:0 0 24px}
+.author-tabs button{border:0;border-bottom:2px solid transparent;background:none;color:var(--muted);padding:13px 2px;min-height:48px;font-size:14px}
+.author-tabs button.selected{color:var(--red);border-bottom-color:var(--red)}
+.author-tools{display:flex;align-items:flex-end;gap:16px;margin-bottom:24px;flex-wrap:wrap}
+.author-tools label{display:block;flex:1;min-width:150px;color:var(--muted);font-size:12px;line-height:1.9}
+.author-tools input,.author-tools select,.chapter-search-label input{display:block;width:100%;min-height:44px;margin-top:6px;padding:10px 12px;border:1px solid var(--line);border-radius:3px;background:var(--paper2);color:var(--ink);font-size:14px}
+.author-tools h3{font-size:19px;font-weight:500;margin:0}.author-tools>div{flex:2;min-width:0}.author-tools .help-text{margin:8px 0 0}
+.editor-toolbar .editor-actions{display:flex;flex-wrap:wrap;gap:8px}.editor-toolbar>span{white-space:normal}
+.writer-session{display:flex;align-items:center;flex-wrap:wrap;gap:8px 14px;padding:12px 16px;margin:-6px 0 24px;border:1px solid var(--line);border-radius:4px;background:#eaece252;font-size:12px;color:var(--muted)}
+.writer-session #writerTimer{color:var(--ink)}.writer-session progress{width:90px;margin:0}.writer-session progress[hidden]{display:none}
+.chapter-sidebar summary,.work-information summary,.writer-note-panel summary{cursor:pointer;font-size:14px;line-height:1.8;min-height:44px;padding:10px 0;color:var(--ink)}
+.chapter-sidebar summary{margin:-8px 0 6px}.chapter-search-label{display:block;font-size:11px;color:var(--muted);margin:0 0 12px}
+.work-information{margin:0 0 18px;border-bottom:1px solid var(--line)}.work-information summary{margin-bottom:8px}
+.writer-note-panel{margin:28px 0;border:1px solid var(--line);background:var(--paper2);padding:10px 20px;border-radius:5px}
+.writer-note-panel summary{padding:6px 0}.note-panel-head{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;margin:12px 0 20px}
+.note-panel-head p{font-size:12px;color:var(--muted);margin:0}.note-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:18px;margin-bottom:20px}
+.note-card{min-width:0;padding:22px;border:1px solid var(--line);background:#fffdf7c9;border-radius:5px;overflow-wrap:anywhere}
+.note-card-top{display:flex;align-items:flex-start;justify-content:space-between;gap:10px;font-size:11px;color:var(--muted)}.note-card-top small{white-space:nowrap}
+.note-card h3{font-size:18px;font-weight:500;line-height:1.6;margin:14px 0 10px}.note-card p{font-size:13px;line-height:1.9;white-space:pre-wrap;display:-webkit-box;-webkit-line-clamp:5;-webkit-box-orient:vertical;overflow:hidden;margin:0}
+.note-card .work-actions{margin-top:18px}#noteForm textarea{min-height:200px;max-height:45vh;line-height:1.9;font-size:16px}#noteForm select{width:100%;min-height:44px}#noteSaveStatus{font-size:12px;color:var(--muted)}
+.record-summary strong{font-size:18px}.record-table-wrap{border:1px solid var(--line);border-radius:5px;overflow:auto;margin-bottom:36px;background:var(--paper2)}
+.record-table{width:100%;border-collapse:collapse;font-size:13px;text-align:left}.record-table caption{padding:20px;text-align:left;font-size:18px;color:var(--ink)}
+.record-table th,.record-table td{padding:13px 20px;border-top:1px solid var(--line);font-weight:400}.record-table thead{color:var(--muted)}.record-table tbody tr:nth-child(even){background:#eaece22b}
+.writer-focus .shell>.topline,.writer-focus .shell>.header,.writer-focus .shell>.footer,.writer-focus #author>.section-head,.writer-focus .author-intro,.writer-focus .author-stats,.writer-focus .author-tabs,.writer-focus .chapter-sidebar,.writer-focus .work-information,.writer-focus .chapter-title-field,.writer-focus .writer-note-panel{display:none}
+.writer-focus #author{margin:20px auto;max-width:1000px}.writer-focus .editor-layout{display:block}.writer-focus .editor-toolbar{position:sticky;top:0;z-index:5;padding-top:12px;background:var(--paper);margin-bottom:16px}
+.writer-focus .body-field textarea{min-height:calc(100dvh - 270px)}.writer-focus .writer-session{margin-bottom:18px}
+@media(max-width:900px){.editor-toolbar .editor-actions{width:100%}.author-stats strong{font-size:18px}}
+@media(max-width:620px){
+  .author-stats,.record-summary{gap:8px;margin:16px 0 22px;grid-template-columns:1fr 1fr}.author-stats>div,.record-summary>div{padding:14px;min-height:88px}.author-stats .daily-goal,.record-summary>div:last-child{grid-column:1/-1}
+  .author-stats small,.record-summary small{font-size:11px}.author-stats strong{font-size:18px}.daily-goal progress{margin-top:9px}
+  .author-tabs{gap:24px;margin-bottom:20px}.author-tabs button{font-size:13px}.author-tools{gap:10px}.author-tools label{min-width:120px}.author-tools>div{flex-basis:100%}
+  .editor-toolbar .editor-actions{gap:6px}.editor-toolbar .editor-actions button{min-height:44px;font-size:12px;flex:1 0 auto}.editor-toolbar>span{order:3}
+  .writer-session{padding:10px 12px;gap:8px;font-size:11px}.writer-session .quiet-button{padding:7px 9px;min-height:40px}.writer-session #writerTimer{flex:1;min-width:160px}.writer-session #writerGoal{flex:1;min-width:170px}
+  .chapter-sidebar[open]{max-height:280px}.chapter-sidebar:not([open]){max-height:none}.chapter-sidebar summary{margin:0}.work-information summary{margin:0}.work-information{margin-bottom:14px}
+  .note-grid{grid-template-columns:1fr;gap:12px}.note-card{padding:18px}.writer-note-panel{padding:10px 14px}.note-panel-head{align-items:flex-start}.note-card-top small{font-size:10px}
+  .record-table{font-size:11px}.record-table th,.record-table td{padding:12px 9px}.record-table caption{padding:16px}.record-summary strong{font-size:17px}
+  .writer-focus #author{margin-top:0}.writer-focus .editor-toolbar{gap:8px;padding-bottom:12px}.writer-focus .body-field textarea{min-height:calc(100dvh - 330px)}
+}

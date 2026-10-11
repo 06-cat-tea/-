@@ -1,7 +1,7 @@
 /* Versioned browser-only data. Legacy keys remain intact until migration is persisted. */
 (() => {
   'use strict';
-  const KEY = 'zhezhi-local-v2';
+  const KEY = 'zhezhi-local-v3';
   const defaults = {theme:'paper', fontSize:16, lineHeight:2.3, width:700, motion:true};
   const uuid = () => globalThis.crypto?.randomUUID?.() || `local-${Date.now()}-${Math.random().toString(36).slice(2)}`;
   const clone = value => JSON.parse(JSON.stringify(value));
@@ -22,9 +22,10 @@
       motion:value.motion !== false
     };
   }
-  function empty() { return {version:2, library:[], history:[], ratings:{}, comments:{}, works:[], settings:{...defaults}, noticeVersion:0}; }
+  function authorSettings(value={}) {return {dailyWordGoal:Number.isInteger(value.dailyWordGoal)&&value.dailyWordGoal>=0&&value.dailyWordGoal<=1000000?value.dailyWordGoal:2000};}
+  function empty() { return {version:3, library:[], history:[], ratings:{}, comments:{}, works:[], inspirationNotes:[], writingRecords:[], authorSettings:authorSettings(), settings:{...defaults}, noticeVersion:0}; }
   function validate(input) {
-    if (!object(input) || input.version !== 2) throw Error('不支持的数据版本');
+    if (!object(input) || ![2,3].includes(input.version)) throw Error('不支持的数据版本');
     for (const key of ['library','history','works']) if(!Array.isArray(input[key]) || input[key].length>1000) throw Error('备份列表格式不正确');
     if(!object(input.ratings)||!object(input.comments)||!object(input.settings))throw Error('备份数据不完整');
     const output=empty();
@@ -57,6 +58,20 @@
         chapterIds.add(c.id);return {id:c.id,title:c.title,content:c.content};
       })};
     });
+    if(input.version===3){
+      if(!Array.isArray(input.inspirationNotes)||input.inspirationNotes.length>10000||!Array.isArray(input.writingRecords)||input.writingRecords.length>100000||!object(input.authorSettings))throw Error('作者工具数据不完整');
+      const noteIds=new Set(),recordIds=new Set();
+      output.inspirationNotes=input.inspirationNotes.map(n=>{
+        if(!object(n)||!safeId(n.id)||noteIds.has(n.id)||!str(n.title,80)||!str(n.content,20000)||(n.workId!==null&&!safeId(n.workId))||typeof n.pinned!=='boolean'||!str(n.createdAt,100)||!str(n.updatedAt,100))throw Error('灵感便条格式不正确');
+        noteIds.add(n.id);return {id:n.id,title:n.title,content:n.content,workId:n.workId,pinned:n.pinned,createdAt:n.createdAt,updatedAt:n.updatedAt};
+      });
+      output.writingRecords=input.writingRecords.map(r=>{
+        if(!object(r)||!safeId(r.id)||recordIds.has(r.id)||!safeId(r.workId)||!str(r.workTitle,40)||!/^\d{4}-\d{2}-\d{2}$/.test(r.date)||!Number.isFinite(Date.parse(r.date+'T00:00:00Z'))||new Date(r.date+'T00:00:00Z').toISOString().slice(0,10)!==r.date||!Number.isSafeInteger(r.durationMs)||r.durationMs<0||!Number.isSafeInteger(r.netWords)||!str(r.updatedAt,100))throw Error('写作记录格式不正确');
+        recordIds.add(r.id);return {id:r.id,workId:r.workId,workTitle:r.workTitle,date:r.date,durationMs:r.durationMs,netWords:r.netWords,updatedAt:r.updatedAt};
+      });
+      if(!Number.isInteger(input.authorSettings.dailyWordGoal)||input.authorSettings.dailyWordGoal<0||input.authorSettings.dailyWordGoal>1000000)throw Error('每日目标格式不正确');
+      output.authorSettings=authorSettings(input.authorSettings);
+    }
     output.settings=settings(input.settings);
     output.noticeVersion=Number.isInteger(input.noticeVersion)?input.noticeVersion:0;
     return output;
@@ -73,9 +88,11 @@
     data.settings=settings({fontSize:size,theme});return data;
   }
   let data;
-  const existing=read(KEY,null);
-  try { data=existing?validate(existing):validate(legacy()); }
-  catch { data=legacy(); }
+  for(const candidate of [read(KEY,null),read('zhezhi-local-v2',null)]){
+    if(!candidate)continue;
+    try{data=validate(candidate);break}catch{/* Try the preserved previous version. */}
+  }
+  if(!data)data=validate(legacy());
   function persist() {
     try { localStorage.setItem(KEY,JSON.stringify(data));durable=true; }
     catch { durable=false; }
@@ -103,6 +120,12 @@
       const works=new Map(next.works.map(x=>[x.id,x]));
       incoming.works.forEach(w=>{if(!works.has(w.id)||w.updatedAt>works.get(w.id).updatedAt)works.set(w.id,w)});
       next.works=[...works.values()];next.settings={...incoming.settings};
+      for(const key of ['inspirationNotes','writingRecords']){
+        const rows=new Map(next[key].map(x=>[x.id,x]));
+        incoming[key].forEach(x=>{if(!rows.has(x.id)||x.updatedAt>rows.get(x.id).updatedAt)rows.set(x.id,x)});
+        next[key]=[...rows.values()];
+      }
+      next.authorSettings={...incoming.authorSettings};
     });
   }
   function clear(keys) {
@@ -110,11 +133,14 @@
       keys.forEach(key=>{
         if(key==='feedback'){next.ratings={};next.comments={}}
         else if(key==='settings')next.settings={...defaults};
-        else if(['library','history','works'].includes(key))next[key]=[];
+        else if(key==='authorSettings')next.authorSettings=authorSettings();
+        else if(['library','history','works','inspirationNotes','writingRecords'].includes(key))next[key]=[];
       });
       const old={library:['zhezhi-library'],history:['zhezhi-history'],feedback:['zhezhi-ratings','zhezhi-comments'],works:['zhezhi-drafts'],settings:['zhezhi-font-size','zhezhi-reading-theme']};
       keys.flatMap(k=>old[k]||[]).forEach(k=>{try{localStorage.removeItem(k)}catch{}});
+      const previous=read('zhezhi-local-v2',null);
+      if(previous){keys.forEach(key=>{if(key==='feedback'){previous.ratings={};previous.comments={}}else if(key==='settings')previous.settings={...defaults};else if(['library','history','works'].includes(key))previous[key]=[]});try{localStorage.setItem('zhezhi-local-v2',JSON.stringify(previous))}catch{}}
     });
   }
-  window.ZhezhiStore={get:()=>data,change,settings,uuid,backup,parseBackup,merge,clear,isDurable:()=>durable,clone};
+  window.ZhezhiStore={get:()=>data,change,settings,authorSettings,uuid,backup,parseBackup,merge,clear,isDurable:()=>durable,clone};
 })();
