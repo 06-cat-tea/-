@@ -1,11 +1,11 @@
 const CACHE_PREFIX = "zhezhi-literature-";
-const CACHE_NAME = `${CACHE_PREFIX}studio-20261012-2`;
+const CACHE_NAME = `${CACHE_PREFIX}copyright-20261012-1`;
 const APP_SHELL = [
-  "./index.html", "./manifest.webmanifest", "./icon.svg", "./novel-data/jinli.js?v=20261012-studio2",
-  "./assets/site.css?v=20261012-studio2", "./assets/upgrade.css?v=20261012-studio2",
-  "./assets/utils.js?v=20261012-studio2", "./assets/snapshots.js?v=20261012-studio2",
-  "./assets/backup.js?v=20261012-studio2", "./assets/studio.js?v=20261012-studio2", "./assets/author.js?v=20261012-studio2",
-  "./assets/catalog.js?v=20261012-studio2", "./assets/store.js?v=20261012-studio2", "./assets/writer.js?v=20261012-studio2", "./assets/app.js?v=20261012-studio2"
+  "./index.html", "./manifest.webmanifest", "./icon.svg", "./novel-data/jinli.js?v=20261012-copyright1",
+  "./assets/site.css?v=20261012-copyright1", "./assets/upgrade.css?v=20261012-copyright1",
+  "./assets/utils.js?v=20261012-copyright1", "./assets/snapshots.js?v=20261012-copyright1",
+  "./assets/backup.js?v=20261012-copyright1", "./assets/studio.js?v=20261012-copyright1", "./assets/author.js?v=20261012-copyright1",
+  "./assets/catalog.js?v=20261012-copyright1", "./assets/store.js?v=20261012-copyright1", "./assets/writer.js?v=20261012-copyright1", "./assets/app.js?v=20261012-copyright1"
 ];
 
 self.addEventListener("install", event => {

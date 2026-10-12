@@ -84,7 +84,7 @@ async function settle(page){await page.waitForTimeout(120)}
   await check('offline shell and cache-version cleanup',async()=>{
     await page.evaluate(async()=>{await navigator.serviceWorker.ready;if(!navigator.serviceWorker.controller)await new Promise(resolve=>navigator.serviceWorker.addEventListener('controllerchange',resolve,{once:true}))});
     await page.goto(base);await acknowledge(page);await context.setOffline(true);await page.reload();assert.equal(await page.locator('.book-card').count(),6);await context.setOffline(false);
-    assert((await page.evaluate(()=>caches.keys())).includes('zhezhi-literature-studio-20261012-2'));
+    assert((await page.evaluate(()=>caches.keys())).includes('zhezhi-literature-copyright-20261012-1'));
     const staleContext=await browser.newContext(),stalePage=await staleContext.newPage();await stalePage.route('**/assets/app.js*',r=>r.abort());await stalePage.goto(base);await stalePage.evaluate(()=>caches.open('zhezhi-literature-obsolete'));await stalePage.unroute('**/assets/app.js*');await stalePage.reload();await acknowledge(stalePage);await stalePage.evaluate(async()=>{await navigator.serviceWorker.ready;if(!navigator.serviceWorker.controller)await new Promise(resolve=>navigator.serviceWorker.addEventListener('controllerchange',resolve,{once:true}))});assert(!(await stalePage.evaluate(()=>caches.keys())).includes('zhezhi-literature-obsolete'));await staleContext.close();
   });
   const mobile=await browser.newContext({viewport:{width:390,height:844},reducedMotion:'reduce'}),mobilePage=await mobile.newPage();mobilePage.on('pageerror',e=>failures.push(e.message));
