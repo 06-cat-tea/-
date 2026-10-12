@@ -17,7 +17,7 @@
   async function list(workId){const db=await open();return new Promise((resolve,reject)=>{const tx=db.transaction('snapshots','readonly'),store=tx.objectStore('snapshots'),request=workId?store.index('workId').getAll(workId):store.getAll();request.onsuccess=()=>resolve(request.result.sort((a,b)=>b.createdAt.localeCompare(a.createdAt)||b.id.localeCompare(a.id)));request.onerror=()=>reject(Error('无法读取历史快照。'));});}
   function validate(rows){
     if(!Array.isArray(rows)||rows.length>100000)throw Error('快照列表格式不正确');const seen=new Set(),id=value=>typeof value==='string'&&value.length<=160&&/^[\w:.-]+$/.test(value)&&!['__proto__','constructor','prototype'].includes(value);
-    return rows.map(r=>{if(!r||!id(r.id)||seen.has(r.id)||!id(r.workId)||!id(r.chapterId)||!['manual','auto'].includes(r.kind)||typeof r.name!=='string'||r.name.length>80||typeof r.title!=='string'||r.title.length>80||typeof r.content!=='string'||r.content.length>200000||typeof r.createdAt!=='string'||!Number.isFinite(Date.parse(r.createdAt)))throw Error('章节快照格式不正确');seen.add(r.id);return {id:r.id,workId:r.workId,chapterId:r.chapterId,title:r.title,content:r.content,name:r.name,kind:r.kind,createdAt:r.createdAt};});
+    return rows.map(r=>{if(!r||!id(r.id)||seen.has(r.id)||!id(r.workId)||!id(r.chapterId)||!['manual','auto'].includes(r.kind)||typeof r.name!=='string'||r.name.length>80||typeof r.title!=='string'||r.title.length>80||typeof r.content!=='string'||r.content.length>200000||typeof r.createdAt!=='string'||r.createdAt.length>100||!Number.isFinite(Date.parse(r.createdAt)))throw Error('章节快照格式不正确');seen.add(r.id);return {id:r.id,workId:r.workId,chapterId:r.chapterId,title:r.title,content:r.content,name:r.name,kind:r.kind,createdAt:new Date(r.createdAt).toISOString()};});
   }
   async function write(rows,removeIds=[]){const db=await open();return new Promise((resolve,reject)=>{const tx=db.transaction('snapshots','readwrite'),store=tx.objectStore('snapshots');for(const row of rows)store.put(row);for(const id of removeIds)store.delete(id);tx.oncomplete=()=>resolve(true);tx.onabort=tx.onerror=()=>reject(Error('历史快照未保存：存储空间不足或浏览器限制。当前正文不受影响。'));});}
   async function takeImpl(workId,chapter,kind='auto',name=''){
@@ -27,7 +27,12 @@
     const row={id:Store.uuid(),workId,chapterId:chapter.id,title:chapter.title,content:chapter.content,kind,name:name.slice(0,80),createdAt:new Date(stamp).toISOString()};
     const autos=[row,...existing].filter(r=>r.kind==='auto');await write([row],autos.slice(20).map(r=>r.id));return row;
   }
-  async function merge(rows){const validated=validate(rows),existing=new Set((await list()).map(r=>r.id));return write(validated.filter(r=>!existing.has(r.id)));}
+  async function merge(rows){
+    const validated=validate(rows),current=await list(),ids=new Set(current.map(r=>r.id)),incoming=validated.filter(r=>!ids.has(r.id)),groups=new Map();
+    for(const row of [...current,...incoming]){if(row.kind!=='auto')continue;const key=JSON.stringify([row.workId,row.chapterId]);if(!groups.has(key))groups.set(key,[]);groups.get(key).push(row);}
+    const removed=new Set();for(const group of groups.values()){group.sort((a,b)=>b.createdAt.localeCompare(a.createdAt)||b.id.localeCompare(a.id));for(const row of group.slice(20))removed.add(row.id);}
+    return write(incoming.filter(r=>!removed.has(r.id)),[...removed]);
+  }
   async function clear(workId){const rows=await list(workId);return write([],rows.map(r=>r.id));}
   const serialize=operation=>(...args)=>{const next=queue.catch(()=>{}).then(()=>operation(...args));queue=next;return next;};
   window.ZhezhiSnapshots={list,take:serialize(takeImpl),validate,merge:serialize(merge),clear:serialize(clear),remove:serialize(id=>write([],[id]))};
