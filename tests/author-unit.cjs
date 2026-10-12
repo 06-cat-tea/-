@@ -3,11 +3,11 @@ const assert=require('node:assert/strict');
 const fs=require('node:fs');
 const vm=require('node:vm');
 const path=require('node:path');
-const scripts=['store.js','writer.js'].map(name=>fs.readFileSync(path.join(__dirname,'..','assets',name),'utf8'));
+const scripts=['utils.js','store.js','writer.js'].map(name=>fs.readFileSync(path.join(__dirname,'..','assets',name),'utf8'));
 function environment({initial={},blocked=false,start=new Date(2026,9,12,12).getTime()}={}){
   let wall=start,clock=0,id=0;const storage=new Map(Object.entries(initial)),ticks=[];
   class ClockDate extends Date{constructor(...args){super(...(args.length?args:[wall]))}static now(){return wall}}
-  const context=vm.createContext({Date:ClockDate,performance:{now:()=>clock},crypto:{randomUUID:()=>`test-${++id}`},document:{hidden:false},console,Event:class{},CustomEvent:class{},setInterval:fn=>ticks.push(fn),setTimeout:()=>{},localStorage:{getItem:key=>storage.get(key)||null,setItem:(key,value)=>{if(blocked)throw Error('quota');storage.set(key,value)},removeItem:key=>storage.delete(key)}});
+  const context=vm.createContext({TextEncoder,Date:ClockDate,performance:{now:()=>clock},crypto:{randomUUID:()=>`test-${++id}`},document:{hidden:false},console,Event:class{},CustomEvent:class{},setInterval:fn=>ticks.push(fn),setTimeout:()=>{},localStorage:{getItem:key=>storage.get(key)||null,setItem:(key,value)=>{if(blocked)throw Error('quota');storage.set(key,value)},removeItem:key=>storage.delete(key)}});
   context.window=context;context.dispatchEvent=()=>{};
   scripts.forEach(script=>vm.runInContext(script,context));
   return {Store:context.ZhezhiStore,Writer:context.ZhezhiWriter,context,storage,advance(ms){wall+=ms;clock+=ms;ticks.forEach(fn=>fn())}};
@@ -18,7 +18,7 @@ const checks=[];function check(name,fn){fn();checks.push(name);console.log('PASS
 check('v2 migration preserves IDs and previous storage, including denied writes',()=>{
   const empty=JSON.parse(JSON.stringify(environment().Store.get()));empty.version=2;empty.works=[work];delete empty.authorSettings;delete empty.inspirationNotes;delete empty.writingRecords;
   const source=JSON.stringify(empty);
-  for(const blocked of [false,true]){const env=environment({initial:{'zhezhi-local-v2':source},blocked});assert.equal(env.Store.get().version,3);assert.equal(env.Store.get().works[0].chapters[0].id,'stable-chapter');assert.equal(env.Store.get().authorSettings.dailyWordGoal,2000);assert.equal(env.storage.get('zhezhi-local-v2'),source);assert.equal(env.Store.isDurable(),!blocked);assert.equal(env.Store.parseBackup(JSON.stringify({format:'zhezhi-literature-backup',version:1,data:empty})).version,3)}
+  for(const blocked of [false,true]){const env=environment({initial:{'zhezhi-local-v2':source},blocked});assert.equal(env.Store.get().version,4);assert.equal(env.Store.get().works[0].chapters[0].id,'stable-chapter');assert.equal(env.Store.get().authorSettings.dailyWordGoal,2000);assert.equal(env.storage.get('zhezhi-local-v2'),source);assert.equal(env.Store.isDurable(),!blocked);assert.equal(env.Store.parseBackup(JSON.stringify({format:'zhezhi-literature-backup',version:1,data:empty})).version,4)}
 });
 check('timer checkpoints, idle cutoff, manual resume and background pause',()=>{
   const {Store,Writer,context,advance}=environment();Writer.bind(work);assert.equal(Writer.state().running,false);Writer.activity();advance(15000);assert.equal(Store.get().writingRecords[0].durationMs,15000);advance(115000);assert.equal(Writer.summary().totalMs,120000);assert.equal(Writer.state().running,false);
@@ -40,5 +40,18 @@ check('malformed author backups are rejected before mutation',()=>{
 });
 check('work cleanup preserves notes and records; category cleanup stays independent',()=>{
   const {Store,Writer}=environment();Store.change(d=>{d.works=[work];d.inspirationNotes=[note]});Writer.addWords(work,{'2026-10-12':5});Store.clear(['works']);assert.equal(Store.get().inspirationNotes.length,1);assert.equal(Store.get().writingRecords.length,1);Store.clear(['inspirationNotes']);assert.equal(Store.get().writingRecords.length,1);Store.clear(['writingRecords']);assert.equal(Store.get().writingRecords.length,0);
+});
+check('v3 migration preserves author records and initializes independent workspace data',()=>{
+  const original=environment().Store.backup().data;original.version=3;delete original.workspaces;original.works=[work];original.inspirationNotes=[note];original.authorSettings.dailyWordGoal=0;
+  const {Store}=environment({initial:{'zhezhi-local-v3':JSON.stringify(original)}});assert.equal(Store.get().version,4);assert.equal(Store.get().works[0].id,work.id);assert.equal(Store.get().inspirationNotes[0].id,note.id);assert.equal(Store.get().authorSettings.dailyWordGoal,0);assert.equal(Store.get().workspaces.length,0);
+});
+check('repeated pause and statistics reads do not cause duplicate storage writes',()=>{
+  const {Store,Writer,advance}=environment();let writes=0;const change=Store.change;Store.change=fn=>{writes++;return change(fn)};Writer.bind(work);Writer.pause();Writer.pause();Writer.flush();Writer.summary();assert.equal(writes,0);Writer.activity();advance(15000);assert.equal(writes,1);Writer.pause();Writer.pause();Writer.summary();Writer.summary();assert.equal(writes,1);
+});
+check('workspace merge chooses newer settings and rejects broken character relations',()=>{
+  const {Store}=environment();const settings=Store.workspace(work.id);settings.characters=[{id:'person-a',name:'甲',aliases:'',role:'旅人',motivation:'',notes:''},{id:'person-b',name:'乙',aliases:'',role:'剑修',motivation:'',notes:''}];settings.relations=[{id:'relation-a',from:'person-a',to:'person-b',label:'同行',direction:'both'}];settings.chapterCards=[{id:'card-a',chapterId:'deleted-chapter',goal:'保留已删除章节的卡片',conflict:'',turn:''}];Store.change(d=>{d.works=[work];d.workspaces=[settings]});const incoming=Store.parseBackup(JSON.stringify(Store.backup()));incoming.workspaces[0].overview.theme='更新主题';incoming.workspaces[0].updatedAt='2026-10-13T00:00:00Z';Store.merge(incoming);assert.equal(Store.get().workspaces[0].overview.theme,'更新主题');const broken=Store.backup();broken.data.workspaces[0].relations[0].to='missing-person';assert.throws(()=>Store.parseBackup(JSON.stringify(broken)),/创作设定/);Store.clear(['works']);assert.equal(Store.get().workspaces.length,1);Store.clear(['workspaces']);assert.equal(Store.get().workspaces.length,0);
+});
+check('backup size validation uses UTF-8 bytes rather than character count',()=>{
+  const {Store}=environment();const oversized='汉'.repeat(Math.floor(Store.MAX_BACKUP_BYTES/3)+1);assert(oversized.length<Store.MAX_BACKUP_BYTES);assert.throws(()=>Store.parseBackup(oversized),/50 MB/);
 });
 console.log(`${checks.length} author unit scenarios passed.`);

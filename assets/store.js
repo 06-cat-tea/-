@@ -1,7 +1,7 @@
 /* Versioned browser-only data. Legacy keys remain intact until migration is persisted. */
 (() => {
   'use strict';
-  const KEY = 'zhezhi-local-v3';
+  const KEY = 'zhezhi-local-v4', MAX_BACKUP_BYTES=50*1024*1024;
   const defaults = {theme:'paper', fontSize:16, lineHeight:2.3, width:700, motion:true};
   const uuid = () => globalThis.crypto?.randomUUID?.() || `local-${Date.now()}-${Math.random().toString(36).slice(2)}`;
   const clone = value => JSON.parse(JSON.stringify(value));
@@ -23,9 +23,10 @@
     };
   }
   function authorSettings(value={}) {return {dailyWordGoal:Number.isInteger(value.dailyWordGoal)&&value.dailyWordGoal>=0&&value.dailyWordGoal<=1000000?value.dailyWordGoal:2000};}
-  function empty() { return {version:3, library:[], history:[], ratings:{}, comments:{}, works:[], inspirationNotes:[], writingRecords:[], authorSettings:authorSettings(), settings:{...defaults}, noticeVersion:0}; }
+  function workspace(id) {return {id,overview:{theme:'',mainline:'',ending:''},chapterCards:[],characters:[],relations:[],foreshadows:[],updatedAt:date()};}
+  function empty() { return {version:4, library:[], history:[], ratings:{}, comments:{}, works:[], workspaces:[], inspirationNotes:[], writingRecords:[], authorSettings:authorSettings(), settings:{...defaults}, noticeVersion:0}; }
   function validate(input) {
-    if (!object(input) || ![2,3].includes(input.version)) throw Error('不支持的数据版本');
+    if (!object(input) || ![2,3,4].includes(input.version)) throw Error('不支持的数据版本');
     for (const key of ['library','history','works']) if(!Array.isArray(input[key]) || input[key].length>1000) throw Error('备份列表格式不正确');
     if(!object(input.ratings)||!object(input.comments)||!object(input.settings))throw Error('备份数据不完整');
     const output=empty();
@@ -58,7 +59,7 @@
         chapterIds.add(c.id);return {id:c.id,title:c.title,content:c.content};
       })};
     });
-    if(input.version===3){
+    if(input.version>=3){
       if(!Array.isArray(input.inspirationNotes)||input.inspirationNotes.length>10000||!Array.isArray(input.writingRecords)||input.writingRecords.length>100000||!object(input.authorSettings))throw Error('作者工具数据不完整');
       const noteIds=new Set(),recordIds=new Set();
       output.inspirationNotes=input.inspirationNotes.map(n=>{
@@ -71,6 +72,22 @@
       });
       if(!Number.isInteger(input.authorSettings.dailyWordGoal)||input.authorSettings.dailyWordGoal<0||input.authorSettings.dailyWordGoal>1000000)throw Error('每日目标格式不正确');
       output.authorSettings=authorSettings(input.authorSettings);
+    }
+    if(input.version===4){
+      if(!Array.isArray(input.workspaces)||input.workspaces.length>1000)throw Error('创作设定格式不正确');
+      const workspaceIds=new Set();
+      output.workspaces=input.workspaces.map(w=>{
+        if(!object(w)||!safeId(w.id)||workspaceIds.has(w.id)||!object(w.overview)||!['theme','mainline','ending'].every(k=>str(w.overview[k],20000))||!str(w.updatedAt,100))throw Error('作品大纲格式不正确');
+        workspaceIds.add(w.id);const result=workspace(w.id);result.overview={theme:w.overview.theme,mainline:w.overview.mainline,ending:w.overview.ending};result.updatedAt=w.updatedAt;
+        const readRows=(key,test,fields)=>{if(!Array.isArray(w[key])||w[key].length>2000)throw Error('创作设定列表格式不正确');const seen=new Set();return w[key].map(row=>{if(!object(row)||!safeId(row.id)||seen.has(row.id)||!test(row))throw Error('创作设定内容格式不正确');seen.add(row.id);return Object.fromEntries(['id',...fields].map(k=>[k,row[k]]));});};
+        const ref=id=>id===null||safeId(id), texts=(row,keys,max=20000)=>keys.every(k=>str(row[k],max));
+        result.chapterCards=readRows('chapterCards',r=>ref(r.chapterId)&&texts(r,['goal','conflict','turn']),['chapterId','goal','conflict','turn']);
+        result.characters=readRows('characters',r=>str(r.name,40)&&r.name.trim()&&texts(r,['aliases','role','motivation','notes']),['name','aliases','role','motivation','notes']);
+        const people=new Set(result.characters.map(c=>c.id));
+        result.relations=readRows('relations',r=>people.has(r.from)&&people.has(r.to)&&r.from!==r.to&&str(r.label,80)&&['one','both'].includes(r.direction),['from','to','label','direction']);
+        result.foreshadows=readRows('foreshadows',r=>str(r.title,80)&&str(r.content,20000)&&ref(r.plantChapterId)&&ref(r.payoffChapterId)&&['pending','resolved','abandoned'].includes(r.status),['title','content','plantChapterId','payoffChapterId','status']);
+        return result;
+      });
     }
     output.settings=settings(input.settings);
     output.noticeVersion=Number.isInteger(input.noticeVersion)?input.noticeVersion:0;
@@ -88,7 +105,7 @@
     data.settings=settings({fontSize:size,theme});return data;
   }
   let data;
-  for(const candidate of [read(KEY,null),read('zhezhi-local-v2',null)]){
+  for(const candidate of [read(KEY,null),read('zhezhi-local-v3',null),read('zhezhi-local-v2',null)]){
     if(!candidate)continue;
     try{data=validate(candidate);break}catch{/* Try the preserved previous version. */}
   }
@@ -104,10 +121,10 @@
   function change(fn) {const next=clone(data);fn(next);data=next;return persist();}
   function backup() {return {format:'zhezhi-literature-backup',version:1,exportedAt:date(),data:clone({...data,noticeVersion:0})};}
   function parseBackup(text) {
-    if(text.length>10*1024*1024)throw Error('备份超过 10 MB，请拆分后再导入');
+    if(window.ZhezhiUtils.bytes(text)>MAX_BACKUP_BYTES)throw Error('备份超过 50 MB，请选择分批导出的文件');
     let parsed;try{parsed=JSON.parse(text)}catch{throw Error('文件不是有效的 JSON 备份')}
     if(parsed?.format!=='zhezhi-literature-backup'||parsed.version!==1)throw Error('请选择折纸文学导出的备份文件');
-    return validate(parsed.data);
+    const incoming=validate(parsed.data);incoming.chapterSnapshots=parsed.chapterSnapshots??[];incoming.historyScope=parsed.historyScope??'none';return incoming;
   }
   function merge(incoming) {
     return change(next=>{
@@ -117,14 +134,8 @@
       next.history=[...histories.values()].sort((a,b)=>b.readAt.localeCompare(a.readAt)).slice(0,50);
       next.ratings={...next.ratings,...incoming.ratings};
       for(const [id,list] of Object.entries(incoming.comments))next.comments[id]=[...new Map([...(next.comments[id]||[]),...list].map(c=>[c.id,c])).values()].sort((a,b)=>b.createdAt.localeCompare(a.createdAt)).slice(0,30);
-      const works=new Map(next.works.map(x=>[x.id,x]));
-      incoming.works.forEach(w=>{if(!works.has(w.id)||w.updatedAt>works.get(w.id).updatedAt)works.set(w.id,w)});
-      next.works=[...works.values()];next.settings={...incoming.settings};
-      for(const key of ['inspirationNotes','writingRecords']){
-        const rows=new Map(next[key].map(x=>[x.id,x]));
-        incoming[key].forEach(x=>{if(!rows.has(x.id)||x.updatedAt>rows.get(x.id).updatedAt)rows.set(x.id,x)});
-        next[key]=[...rows.values()];
-      }
+      for(const key of ['works','inspirationNotes','writingRecords','workspaces'])next[key]=window.ZhezhiUtils.mergeLatest(next[key],incoming[key]);
+      next.settings={...incoming.settings};
       next.authorSettings={...incoming.authorSettings};
     });
   }
@@ -134,13 +145,12 @@
         if(key==='feedback'){next.ratings={};next.comments={}}
         else if(key==='settings')next.settings={...defaults};
         else if(key==='authorSettings')next.authorSettings=authorSettings();
-        else if(['library','history','works','inspirationNotes','writingRecords'].includes(key))next[key]=[];
+        else if(['library','history','works','inspirationNotes','writingRecords','workspaces'].includes(key))next[key]=[];
       });
       const old={library:['zhezhi-library'],history:['zhezhi-history'],feedback:['zhezhi-ratings','zhezhi-comments'],works:['zhezhi-drafts'],settings:['zhezhi-font-size','zhezhi-reading-theme']};
       keys.flatMap(k=>old[k]||[]).forEach(k=>{try{localStorage.removeItem(k)}catch{}});
-      const previous=read('zhezhi-local-v2',null);
-      if(previous){keys.forEach(key=>{if(key==='feedback'){previous.ratings={};previous.comments={}}else if(key==='settings')previous.settings={...defaults};else if(['library','history','works'].includes(key))previous[key]=[]});try{localStorage.setItem('zhezhi-local-v2',JSON.stringify(previous))}catch{}}
+      for(const key of ['zhezhi-local-v2','zhezhi-local-v3']){const previous=read(key,null);if(previous){keys.forEach(category=>{if(category==='feedback'){previous.ratings={};previous.comments={}}else if(category==='settings')previous.settings={...defaults};else if(['library','history','works','inspirationNotes','writingRecords'].includes(category))previous[category]=[]});try{localStorage.setItem(key,JSON.stringify(previous))}catch{}}}
     });
   }
-  window.ZhezhiStore={get:()=>data,change,settings,authorSettings,uuid,backup,parseBackup,merge,clear,isDurable:()=>durable,clone};
+  window.ZhezhiStore={get:()=>data,change,settings,authorSettings,workspace,MAX_BACKUP_BYTES,uuid,backup,parseBackup,merge,clear,isDurable:()=>durable,clone};
 })();

@@ -1,7 +1,3 @@
-// 后端接入点：配置 API_BASE 后，将本地示例数据适配到这些资源端点。
-    const API_BASE = ""; // e.g. https://api.example.com/v1
-    const API_ENDPOINTS = { books: "/books", chapters: "/books/:id/chapters", library: "/users/me/library", history: "/users/me/reading-history", drafts: "/author/drafts", ratings: "/books/:id/ratings", comments: "/books/:id/comments" };
-    const tiebaUrl = "https://tieba.baidu.com/f?kw=%E5%8F%98%E8%BA%AB%E5%AB%81%E4%BA%BA%E5%B0%8F%E8%AF%B4";
     const books = [
       {id:"b1",title:"春日来信，请查收",author:"白露未晞",category:"校园",tags:["校园","恋爱","成长"],desc:"转学生林枝总在课桌里收到没有署名的信。直到春天快要结束，她才发现那是写给另一个自己的告白。",chapter:"第 28 章 迟到的回信",heat:"8.6万",cover:"c1",status:"连载中",content:"三月的风吹过走廊尽头，带来一点潮湿的花香。林枝把那张折成小船的信纸放进抽屉，纸角有一行很轻的字：\n\n“如果有一天，你愿意用自己的名字介绍自己，那天我想第一个听见。”\n\n她在窗边站了很久。操场上，梧桐刚刚抽出新叶，广播里的点名声被春风吹得有些模糊。她忽然觉得，那封信并不是在问一个答案，而是在等她慢慢成为自己。"},
       {id:"b2",title:"月亮落在第七街",author:"橘子海",category:"奇幻",tags:["奇幻","日常","轻松"],desc:"月光下的小巷有一间旧书店，午夜之后，书页会替来客交换一段人生。",chapter:"第 41 章 旧书店的灯",heat:"7.2万",cover:"c2",status:"连载中",content:"第七街的路灯总比别处晚亮五分钟。老板说那是月亮在找钥匙。我原先不信，直到那天午夜，我在书店里翻开一本没有名字的书。\n\n下一页写着我的名字，以及一段我从未经历过的人生。书页边缘落下一片银白色的光，像有人把月色折成了很小很小的一角，放到了我的掌心。"},
@@ -19,4 +15,4 @@
     if(demoChapters.length) books.push({id:"jinli",title:"雾台照微",author:"折纸文学·演示作品",category:"变身仙侠",tags:["变身仙侠","变身","仙侠","身份成长","情感"],desc:"陆见星醒来时成了云台城里一名陌生女子。面对被人代签的婚书，她与剑修顾明川结伴追查雾潮，在并肩同行中找回选择生活的权利。",chapter:demoChapters[demoChapters.length-1].title,heat:"技术展示",cover:"c8",status:"示例连载",featured:true,content:demoChapters[0].content,chapters:demoChapters});
     if(demoChapters.length) updates.unshift({book:"雾台照微",author:"折纸文学·演示作品",chapter:demoChapters[demoChapters.length-1].title,time:"演示章节",id:"jinli"});
 
-window.ZhezhiCatalog = {books, updates, API_BASE, API_ENDPOINTS};
+window.ZhezhiCatalog = {books, updates};

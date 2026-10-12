@@ -2,18 +2,14 @@
   'use strict';
   const {books,updates}=window.ZhezhiCatalog, Store=window.ZhezhiStore, Writer=window.ZhezhiWriter;
   const $=s=>document.querySelector(s), $$=s=>[...document.querySelectorAll(s)];
-  const esc=value=>String(value??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+  const {esc,count,now}=window.ZhezhiUtils;
   const labels={want:'想读',reading:'在读',done:'读完'};
   const ui={category:'全部',search:'',sort:'popular',page:1,shelf:'all'};
-  const authorUi={search:'',sort:'latest',noteSearch:'',noteWork:'',recordWork:'',chapterSearch:''};
-  let noteEditor=null,noteTimer;
-  let route,activeBook,chapterIndex=0,detailBook,editor=null,saveTimer,progressTimer,toastTimer,undoTimer,undoAction;
+  let route,activeBook,chapterIndex=0,detailBook,progressTimer,toastTimer,undoTimer,undoAction;
   let renderToken=0,navigationRequest=0,restoring=false,pendingDialog=null,dialogTrigger,noticeTrigger,skipPop=false,directoryRequested=false;
-  const now=()=>new Date().toISOString(), count=text=>String(text||'').replace(/\s/g,'').length;
   const chaptersFor=b=>b.chapters?.length?b.chapters:[{title:b.chapter,content:b.content}];
   const catalogBook=id=>books.find(b=>b.id===id);
   const readingRecord=id=>Store.get().history.find(r=>r.id===id);
-  const wordCount=w=>w.chapters.reduce((sum,c)=>sum+count(c.content),0);
   function flash(message) {
     const el=$('#toast');el.textContent=message;el.classList.add('show');clearTimeout(toastTimer);
     toastTimer=setTimeout(()=>el.classList.remove('show'),3200);
@@ -45,7 +41,7 @@
     return new Promise(resolve=>{pendingDialog=resolve});
   }
   function finishDialog(value='cancel') {
-    if(noteEditor){saveNote();noteEditor=null;clearTimeout(noteTimer)}
+    Author.closeDialog();
     $('#utilityLayer').classList.remove('open');syncLayers();
     const fn=pendingDialog;pendingDialog=null;fn?.(value);
     if(dialogTrigger?.isConnected&&!dialogTrigger.closest('[inert]'))dialogTrigger.focus({preventScroll:true});else focusTop();
@@ -84,26 +80,12 @@
     return {...ui,windowY:window.scrollY,detailY:$('#bookDetailLayer').scrollTop,readerY:$('#readerLayer').scrollTop};
   }
   function saveUI(){history.replaceState({...history.state,zhezhi:true,ui:snapshot()},'',location.href)}
-  async function guardEditor() {
-    if(noteEditor)finishDialog('ok');
-    if(!editor?.dirty)return true;
-    clearTimeout(saveTimer);
-    const choice=await dialog('还有文字尚未保存','<p class="notice-copy">离开创作页前，可以保存当前内容，或放弃本次尚未保存的修改。</p>',[{value:'cancel',label:'继续编辑'},{value:'discard',label:'放弃修改'},{value:'save',label:'保存并离开',primary:true}]);
-    if(choice==='cancel'){scheduleSave();return false}
-    if(choice==='save'){
-      saveEditor();
-      if(!Store.isDurable()){
-        const result=await dialog('内容暂存于当前页面','<p class="notice-copy">浏览器无法持久保存，请先导出备份。继续离开仍会保留当前页面的临时数据。</p>',[{value:'cancel',label:'返回编辑'},{value:'export',label:'导出并离开',primary:true}]);
-        if(result!=='export')return false;exportBackup();
-      }
-    }
-    editor.dirty=false;return true;
-  }
+  const guardEditor=()=>Author.guard();
   async function go(target,{replace=false,resume=false,skipGuard=false}={}) {
     const request=++navigationRequest;
     if(!skipGuard&&!await guardEditor())return;
     if(request!==navigationRequest)return;
-    saveProgress();saveUI();
+    await Author.leave();if(request!==navigationRequest)return;saveProgress();saveUI();
     const from=routeURL(route),index=(history.state?.index||0)+(replace?0:1);
     const entry={zhezhi:true,index,from:replace?history.state?.from:from,ui:{...ui},resume};
     history[replace?'replaceState':'pushState'](entry,'',routeURL(target));
@@ -120,9 +102,9 @@
     history.replaceState({...history.state,from:null},'',routeURL(target));renderRoute(target,history.state);
   }
   function renderRoute(target,entry={}) {
-    Writer.pause();setWriterFocus(false);
+    Author.dispose();
     document.body.classList.remove('author-editing');
-    route=target;activeBook=null;detailBook=null;editor=null;clearTimeout(saveTimer);
+    route=target;activeBook=null;detailBook=null;
     renderToken++;restoring=true;const token=renderToken;
     if(entry.ui)for(const key of ['category','search','sort','page','shelf'])if(entry.ui[key]!==undefined)ui[key]=entry.ui[key];
     $('#readerLayer').classList.remove('open');$('#bookDetailLayer').classList.remove('open');
@@ -130,7 +112,7 @@
     const mainKind=['detail','reader'].includes(target.kind)?'home':target.kind;
     document.body.dataset.page=mainKind;
     if(mainKind==='home'){$('#readerView').classList.remove('section-hidden');renderHome()}
-    if(mainKind==='author'){$('#author').classList.remove('section-hidden');renderAuthor(target)}
+    if(mainKind==='author'){$('#author').classList.remove('section-hidden');Author.render(target)}
     if(mainKind==='settings'){$('#settingsPage').classList.remove('section-hidden');renderSettings()}
     if(['privacy','terms'].includes(mainKind)){$('#policyPage').classList.remove('section-hidden');renderPolicy(mainKind)}
     if(target.kind==='detail'){
@@ -244,157 +226,9 @@
     $('#commentInput').value='';$('#commentCount').textContent='0 / 300';
   }
 
-  // The author workspace edits a buffer; auto-save replaces only that work.
-  function renderAuthor(target) {
-    if(editor)Writer.pause();
-    const tab=target.work?'works':target.tab||'works';
-    $$('#authorTabs button').forEach(button=>{const selected=button.dataset.tab===tab;button.classList.toggle('selected',selected);button.setAttribute('aria-pressed',String(selected))});
-    const work=Store.get().works.find(w=>w.id===target.work);
-    document.body.classList.toggle('author-editing',Boolean(work));
-    if(target.work&&!work){flash('作品不存在或已删除。');history.replaceState({...history.state},'',routeURL({kind:'author'}));route={kind:'author'}}
-    if(!work){
-      editor=null;
-      if(tab==='notes')renderNotesPage();
-      else if(tab==='records')renderRecordsPage();
-      else {$('#authorContent').innerHTML=`<div class="author-tools"><label>查找作品<input id="authorWorkSearch" type="search" placeholder="搜索作品名称" value="${esc(authorUi.search)}"></label><label>排序<select id="authorWorkSort"><option value="latest">最近修改</option><option value="title">作品名称</option><option value="words">字数最多</option></select></label></div><div class="work-grid" id="authorWorkList"></div>`;$('#authorWorkSort').value=authorUi.sort;renderWorkList()}
-      updateAuthorStats();return;
-    }
-    const chapter=work.chapters.find(c=>c.id===target.chapter)||work.chapters[0];
-    editor={work:Store.clone(work),chapterId:chapter.id,dirty:false,wordDeltas:{},composing:false};authorUi.chapterSearch='';Writer.bind(work);
-    const expanded=matchMedia('(min-width:621px)').matches?'open':'';
-    $('#authorContent').innerHTML=`<div class="editor-toolbar"><button class="outline-button" data-action="author">← 作品列表</button><span id="saveStatus" role="status">${Store.isDurable()?'已保存到本机':'当前页面暂存，请导出备份'}</span><div class="editor-actions"><button class="outline-button" data-action="writer-focus" aria-pressed="false">专注模式</button><button class="outline-button" data-action="export-txt" data-id="${esc(work.id)}">导出全书</button><button class="outline-button" data-action="export-chapter-txt">导出本章</button><button class="outline-button" data-action="export">JSON 备份</button><button class="outline-button" data-action="preview">本地阅读预览</button><button class="solid-button" data-action="save-work">保存</button></div></div><div class="writer-session"><span id="writerTimer"></span><button class="quiet-button" data-action="writer-pause" aria-pressed="false">暂停计时</button><span id="writerGoal"></span><progress id="writerGoalProgress" max="100" value="0" aria-label="今日写作目标进度"></progress><button class="quiet-button" data-action="writer-goal">设置目标</button></div><div class="editor-layout"><details class="chapter-sidebar" ${expanded}><summary>章节 · <span id="authorChapterCount">${work.chapters.length}</span></summary><label class="chapter-search-label">查找章节<input id="authorChapterSearch" type="search" placeholder="章节标题或序号"></label><div id="authorChapters"></div><button class="outline-button" data-action="add-chapter">＋ 添加章节</button></details><form id="workForm" class="editor-form"><details class="work-information" ${expanded}><summary>作品信息</summary><div class="work-fields"><label class="field"><span>作品名称</span><input name="title" maxlength="40" required value="${esc(work.title)}"></label><label class="field"><span>分类</span><select name="category">${['校园','奇幻','日常','恋爱','成长','轻松','悬疑','科幻','变身仙侠'].map(c=>`<option ${c===work.category?'selected':''}>${c}</option>`).join('')}</select></label></div><label class="field"><span>作品简介</span><input name="description" maxlength="100" value="${esc(work.description)}"></label></details><label class="field chapter-title-field"><span>本章标题</span><input name="chapterTitle" maxlength="80" value="${esc(chapter.title)}"></label><label class="field body-field"><span>本章正文</span><textarea name="content" maxlength="200000" placeholder="把第一段写在这里……">${esc(chapter.content)}</textarea></label><div class="editor-count"><span id="writerCount">本章 ${count(chapter.content)} 字 · 全书 ${wordCount(work)} 字</span><span>停止输入 1 秒后自动保存 · Ctrl/Cmd + S</span></div></form></div><details class="writer-note-panel" id="writerNotePanel"><summary>作品灵感便条 <span id="workNoteCount"></span></summary><div class="note-panel-head"><p>先收好这个念头，再慢慢写进故事。</p><button class="outline-button" data-action="new-note" data-work="${esc(work.id)}">＋ 记下灵感</button></div><div class="note-grid" id="workNotes"></div></details>`;
-    renderAuthorChapters();renderWorkNotes();updateAuthorStats();
-  }
-  function renderWorkList(){
-    const works=Store.get().works.filter(w=>(w.title||'未命名作品').toLocaleLowerCase().includes(authorUi.search.trim().toLocaleLowerCase())).slice();
-    works.sort(authorUi.sort==='title'?(a,b)=>a.title.localeCompare(b.title,'zh-CN'):authorUi.sort==='words'?(a,b)=>wordCount(b)-wordCount(a):(a,b)=>b.updatedAt.localeCompare(a.updatedAt));
-    $('#authorWorkList').innerHTML=works.length?works.map(w=>`<article class="work-card reveal"><span class="section-kicker">${esc(w.category)} · 私有草稿</span><h3>${esc(w.title||'未命名作品')}</h3><p>${esc(w.description||'等待你写下简介。')}</p><small>${w.chapters.length} 章 · ${wordCount(w).toLocaleString('zh-CN')} 字 · ${esc(new Date(w.updatedAt).toLocaleDateString('zh-CN'))}</small><div class="work-actions"><button class="solid-button" data-action="edit-work" data-id="${esc(w.id)}">继续创作</button><button class="outline-button" data-action="export-txt" data-id="${esc(w.id)}">导出全书 TXT</button><button class="quiet-button" data-action="delete-work" data-id="${esc(w.id)}">删除作品</button></div></article>`).join(''):`<div class="empty author-empty"><span>✎</span><h3>${Store.get().works.length?'没有找到对应作品':'每个故事都从一张白纸开始'}</h3><p>${Store.get().works.length?'试试另一个作品名称。':'新建作品，写下属于你的第一章。'}</p>${Store.get().works.length?'':'<button class="solid-button" data-action="new-work">写下新故事</button>'}</div>`;observeReveals();
-  }
-  function collectEditor(){
-    if(!editor||!$('#workForm'))return;
-    const form=$('#workForm');editor.work.title=form.elements.title.value;editor.work.description=form.elements.description.value;editor.work.category=form.elements.category.value;
-    const chapter=editor.work.chapters.find(c=>c.id===editor.chapterId),content=form.elements.content.value,delta=count(content)-count(chapter.content);
-    if(delta){const day=Writer.dayKey();editor.wordDeltas[day]=(editor.wordDeltas[day]||0)+delta}
-    chapter.title=form.elements.chapterTitle.value;chapter.content=content;
-    $('#writerCount').textContent=`本章 ${count(chapter.content)} 字 · 全书 ${wordCount(editor.work)} 字`;
-  }
-  function scheduleSave(){clearTimeout(saveTimer);if(editor?.dirty&&!editor.composing)saveTimer=setTimeout(saveEditor,1000)}
-  function saveEditor(){
-    clearTimeout(saveTimer);if(!editor)return true;collectEditor();editor.work.title=editor.work.title.trim()||'未命名作品';
-    editor.work.updatedAt=now();const work=Store.clone(editor.work);
-    const persisted=Store.change(d=>{const i=d.works.findIndex(w=>w.id===work.id);if(i>=0)d.works[i]=work;else d.works.unshift(work)});
-    const deltas=editor.wordDeltas;editor.wordDeltas={};Writer.addWords(work,deltas);
-    editor.dirty=false;if($('#saveStatus'))$('#saveStatus').textContent=persisted?`已保存 · ${new Date().toLocaleTimeString('zh-CN',{hour:'2-digit',minute:'2-digit',second:'2-digit'})}`:'当前页面暂存，请导出备份';
-    renderAuthorChapters();updateAuthorStats();return persisted;
-  }
-  function renderAuthorChapters(){
-    if(!editor)return;$('#authorChapterCount').textContent=editor.work.chapters.length;
-    $('#authorChapters').innerHTML=editor.work.chapters.map((c,i)=>({c,i})).filter(({c,i})=>`${i+1} ${c.title}`.toLowerCase().includes(authorUi.chapterSearch.trim().toLowerCase())).map(({c,i})=>`<div class="author-chapter ${c.id===editor.chapterId?'selected':''}"><button data-action="edit-chapter" data-id="${esc(c.id)}" ${c.id===editor.chapterId?'aria-current="true"':''}><span>${i+1}. ${esc(c.title||'未命名章节')}</span><small>${count(c.content)} 字</small></button><div><button data-action="chapter-up" data-id="${esc(c.id)}" aria-label="上移${esc(c.title)}" ${i===0?'disabled':''}>↑</button><button data-action="chapter-down" data-id="${esc(c.id)}" aria-label="下移${esc(c.title)}" ${i===editor.work.chapters.length-1?'disabled':''}>↓</button><button data-action="delete-chapter" data-id="${esc(c.id)}" aria-label="删除${esc(c.title)}" ${editor.work.chapters.length===1?'disabled':''}>×</button></div></div>`).join('')||'<p class="help-text">没有找到对应章节。</p>';
-  }
-  function newWork(){
-    const id=Store.uuid(),chapter=Store.uuid();Store.change(d=>{d.works.unshift({id,title:'未命名作品',description:'',category:'变身仙侠',createdAt:now(),updatedAt:now(),chapters:[{id:chapter,title:'第一章',content:''}]})});
-    go({kind:'author',work:id,chapter},{skipGuard:true});
-  }
-  async function mutateChapter(action,id){
-    if(!editor)return;saveEditor();const workId=editor.work.id,work=Store.clone(editor.work),i=work.chapters.findIndex(c=>c.id===id);let selected=editor.chapterId;
-    if(action==='add-chapter'){const c={id:Store.uuid(),title:`第 ${work.chapters.length+1} 章`,content:''};work.chapters.push(c);selected=c.id}
-    if(action==='chapter-up'&&i>0)[work.chapters[i-1],work.chapters[i]]=[work.chapters[i],work.chapters[i-1]];
-    if(action==='chapter-down'&&i>=0&&i<work.chapters.length-1)[work.chapters[i],work.chapters[i+1]]=[work.chapters[i+1],work.chapters[i]];
-    if(action==='delete-chapter'&&i>=0&&work.chapters.length>1){
-      const removed=work.chapters.splice(i,1)[0];if(removed.id===selected)selected=work.chapters[Math.min(i,work.chapters.length-1)].id;
-      offerUndo('章节已删除',()=>{if(editor?.dirty)saveEditor();Store.change(d=>{const w=d.works.find(w=>w.id===workId);if(w&&!w.chapters.some(c=>c.id===removed.id)){w.chapters.splice(Math.min(i,w.chapters.length),0,removed);w.updatedAt=now()}});refreshCurrentAuthor()});
-    }
-    work.updatedAt=now();Store.change(d=>{const pos=d.works.findIndex(w=>w.id===workId);if(pos>=0)d.works[pos]=work});
-    go({kind:'author',work:workId,chapter:selected},{replace:true,skipGuard:true});
-  }
-  function refreshCurrentAuthor(){if(route.kind==='author')renderAuthor(route)}
-
-  function updateAuthorStats(){
-    if(route?.kind!=='author')return;
-    const stats=Writer.summary(),pending=editor?.wordDeltas[Writer.dayKey()]||0,words=stats.todayWords+pending,goal=Store.get().authorSettings.dailyWordGoal;
-    const progress=goal?Math.max(0,Math.min(100,words/goal*100)):0;
-    $('#authorTodayTime').textContent=Writer.duration(stats.todayMs);$('#authorTodayWords').textContent=`${words.toLocaleString('zh-CN')} 字`;
-    $('#authorGoalText').textContent=goal?`${Math.max(0,words).toLocaleString('zh-CN')} / ${goal.toLocaleString('zh-CN')} 字`:'目标已关闭';$('#authorGoalProgress').value=progress;
-    if($('#writerTimer')){
-      const state=Writer.state();$('#writerTimer').textContent=`${state.manualPaused?'手动暂停':state.running?'正在写作':'等待正文编辑'} · 今日 ${Writer.duration(stats.todayMs)}`;
-      const button=$('[data-action="writer-pause"]');button.textContent=state.manualPaused?'恢复计时':'暂停计时';button.setAttribute('aria-pressed',String(state.manualPaused));
-      $('#writerGoal').textContent=goal?`今日净增 ${words} / ${goal} 字`:`今日净增 ${words} 字 · 目标已关闭`;$('#writerGoalProgress').value=progress;$('#writerGoalProgress').hidden=!goal;
-    }
-  }
-  function setWriterFocus(enabled){
-    document.body.classList.toggle('writer-focus',Boolean(enabled));const button=$('[data-action="writer-focus"]');
-    if(button){button.textContent=enabled?'退出专注':'专注模式';button.setAttribute('aria-pressed',String(Boolean(enabled)))}
-  }
-  async function editWriterGoal(){
-    Writer.pause();const result=await dialog('每日写作目标',`<form id="writerGoalForm"><label class="field"><span>每日目标字数（0 表示关闭）</span><input id="dailyWordGoal" type="number" min="0" max="1000000" step="1" required value="${Store.get().authorSettings.dailyWordGoal}"></label><p class="help-text">统计所有作品的正文净增字数，删除正文会抵扣，导入备份不计为新的创作。</p></form>`,[{value:'cancel',label:'取消'},{value:'save',label:'保存目标',primary:true}]);
-    if(result!=='save')return;const value=Number($('#dailyWordGoal').value);
-    if(!$('#dailyWordGoal').value||!Number.isInteger(value)||value<0||value>1000000){flash('请输入 0 到 1000000 之间的整数。');return}
-    Store.change(d=>{d.authorSettings.dailyWordGoal=value});updateAuthorStats();saved('每日目标已保存');
-  }
-  function workOptions(selected='',all=false){
-    const names=new Map(Store.get().works.map(w=>[w.id,w.title||'未命名作品']));
-    Store.get().writingRecords.forEach(r=>{if(!names.has(r.workId))names.set(r.workId,`${r.workTitle||'原作品'}（已删除）`)});
-    Store.get().inspirationNotes.forEach(n=>{if(n.workId&&!names.has(n.workId))names.set(n.workId,'原作品已删除')});
-    return `<option value="">${all?'所有作品':'独立便条'}</option>`+[...names].map(([id,title])=>`<option value="${esc(id)}" ${id===selected?'selected':''}>${esc(title)}</option>`).join('');
-  }
-  function noteMarkup(note){
-    const work=Store.get().works.find(w=>w.id===note.workId),label=note.workId?(work?.title||'原作品已删除'):'独立灵感';
-    return `<article class="note-card"><div class="note-card-top"><span>${note.pinned?'◆ 已置顶 · ':''}${esc(label)}</span><small>${esc(new Date(note.updatedAt).toLocaleDateString('zh-CN'))}</small></div><h3>${esc(note.title||note.content.slice(0,35)||'未命名便条')}</h3><p>${esc(note.content)}</p><div class="work-actions"><button class="outline-button" data-action="edit-note" data-id="${esc(note.id)}">编辑便条</button><button class="quiet-button" data-action="pin-note" data-id="${esc(note.id)}" aria-pressed="${note.pinned}">${note.pinned?'取消置顶':'置顶'}</button><button class="quiet-button" data-action="delete-note" data-id="${esc(note.id)}">删除</button></div></article>`;
-  }
-  function sortedNotes(notes){return notes.slice().sort((a,b)=>Number(b.pinned)-Number(a.pinned)||b.updatedAt.localeCompare(a.updatedAt));}
-  function renderNotesPage(){
-    $('#authorContent').innerHTML=`<div class="author-tools"><label>搜索灵感<input id="noteSearch" type="search" placeholder="标题或便条内容" value="${esc(authorUi.noteSearch)}"></label><label>关联作品<select id="noteWorkFilter">${workOptions(authorUi.noteWork,true)}<option value="unlinked">独立灵感</option></select></label><button class="solid-button" data-action="new-note">＋ 记下灵感</button></div><div class="note-grid" id="noteList"></div>`;$('#noteWorkFilter').value=authorUi.noteWork;renderNoteList();
-  }
-  function renderNoteList(){
-    if(!$('#noteList'))return;const search=authorUi.noteSearch.trim().toLowerCase();
-    const notes=sortedNotes(Store.get().inspirationNotes.filter(n=>(!authorUi.noteWork||(authorUi.noteWork==='unlinked'?!n.workId:n.workId===authorUi.noteWork))&&`${n.title} ${n.content}`.toLowerCase().includes(search)));
-    $('#noteList').innerHTML=notes.map(noteMarkup).join('')||'<div class="empty"><h3>给灵感留一张纸</h3><p>还没有符合条件的便条。随手记下一个场景、一句对白，或一个故事的开头。</p><button class="outline-button" data-action="new-note">＋ 记下灵感</button></div>';
-  }
-  function renderWorkNotes(){
-    if(!editor||!$('#workNotes'))return;const notes=sortedNotes(Store.get().inspirationNotes.filter(n=>n.workId===editor.work.id));
-    $('#workNoteCount').textContent=`· ${notes.length} 条`;$('#workNotes').innerHTML=notes.map(noteMarkup).join('')||'<p class="help-text">这部作品还没有灵感便条。</p>';
-  }
-  async function openNote(id,workId=null){
-    if(pendingDialog)finishDialog('cancel');Writer.pause();
-    const note=id?Store.get().inspirationNotes.find(n=>n.id===id):{id:Store.uuid(),title:'',content:'',workId,pinned:false,createdAt:now(),updatedAt:now()};
-    if(!note)return;noteEditor={note:Store.clone(note),dirty:false,composing:false};
-    await dialog(id?'编辑灵感便条':'记下灵感',`<form id="noteForm"><label class="field"><span>标题（可选）</span><input name="noteTitle" maxlength="80" placeholder="给这个念头起个名字" value="${esc(note.title)}"></label><label class="field"><span>关联作品</span><select name="noteWork">${workOptions(note.workId||'')}</select></label><label class="field"><span>灵感内容</span><textarea name="noteContent" maxlength="20000" placeholder="场景、对白、人物的小秘密……">${esc(note.content)}</textarea></label><p id="noteSaveStatus" role="status">停止输入 1 秒后自动保存</p></form>`,[{value:'ok',label:'保存并关闭',primary:true}]);
-  }
-  function collectNote(){if(!noteEditor||!$('#noteForm'))return;const form=$('#noteForm');noteEditor.note.title=form.elements.noteTitle.value;noteEditor.note.content=form.elements.noteContent.value;noteEditor.note.workId=form.elements.noteWork.value||null;}
-  function saveNote(){
-    clearTimeout(noteTimer);if(!noteEditor)return;collectNote();
-    if(!noteEditor.dirty)return;
-    const note=Store.clone(noteEditor.note),existing=Store.get().inspirationNotes.some(n=>n.id===note.id);
-    if(!existing&&!note.title.trim()&&!note.content.trim()){noteEditor.dirty=false;return}
-    note.updatedAt=now();const durable=Store.change(d=>{const i=d.inspirationNotes.findIndex(n=>n.id===note.id);if(i<0)d.inspirationNotes.unshift(note);else d.inspirationNotes[i]=note});
-    noteEditor.note=note;noteEditor.dirty=false;if($('#noteSaveStatus'))$('#noteSaveStatus').textContent=durable?'便条已保存到本机':'当前页面暂存，请导出备份';renderNoteList();renderWorkNotes();
-  }
-  function noteInput(){collectNote();noteEditor.dirty=true;$('#noteSaveStatus').textContent='尚未保存 · 正在等待输入结束';clearTimeout(noteTimer);if(!noteEditor.composing)noteTimer=setTimeout(saveNote,1000);}
-  function deleteNote(id){
-    const note=Store.get().inspirationNotes.find(n=>n.id===id);if(!note)return;
-    const removed=Store.clone(note);Store.change(d=>{d.inspirationNotes=d.inspirationNotes.filter(n=>n.id!==id)});renderNoteList();renderWorkNotes();
-    offerUndo('灵感便条已删除',()=>{Store.change(d=>{if(!d.inspirationNotes.some(n=>n.id===id))d.inspirationNotes.push(removed)});renderNoteList();renderWorkNotes()});
-  }
-  function renderRecordsPage(){
-    $('#authorContent').innerHTML=`<div class="author-tools"><div><h3>把写过的时间留在这里</h3><p class="help-text">正文编辑自动计时，闲置 2 分钟或进入后台暂停。净增字数保留删除抵扣。</p></div><label>查看作品<select id="recordWorkFilter">${workOptions(authorUi.recordWork,true)}</select></label></div><div class="record-summary" id="recordSummary"></div><div class="record-table-wrap"><table class="record-table"><caption>近 30 天写作记录</caption><thead><tr><th scope="col">日期</th><th scope="col">有效写作时长</th><th scope="col">正文净增字数</th></tr></thead><tbody id="recordRows"></tbody></table></div>`;$('#recordWorkFilter').value=authorUi.recordWork;renderRecordRows();
-  }
-  function renderRecordRows(){
-    if(!$('#recordRows'))return;const stats=Writer.summary(authorUi.recordWork),rows=Writer.records().filter(r=>!authorUi.recordWork||r.workId===authorUi.recordWork);
-    $('#recordSummary').innerHTML=`<div><small>今日写作</small><strong>${Writer.duration(stats.todayMs)}</strong></div><div><small>本周写作 · 周一开始</small><strong>${Writer.duration(stats.weekMs)}</strong></div><div><small>累计写作</small><strong>${Writer.duration(stats.totalMs)}</strong></div>`;
-    const days=new Map();rows.forEach(r=>{if(!days.has(r.date))days.set(r.date,{durationMs:0,netWords:0});const day=days.get(r.date);day.durationMs+=r.durationMs;day.netWords+=r.netWords});
-    const today=new Date();today.setHours(0,0,0,0);const list=[];
-    for(let i=0;i<30;i++){const date=new Date(today);date.setDate(date.getDate()-i);const key=Writer.dayKey(date),day=days.get(key)||{durationMs:0,netWords:0};list.push(`<tr><th scope="row">${key}${i===0?' · 今天':''}</th><td>${Writer.duration(day.durationMs)}</td><td>${day.netWords>0?'+':''}${day.netWords.toLocaleString('zh-CN')} 字</td></tr>`)}
-    $('#recordRows').innerHTML=list.join('');
-  }
-  function exportWorkTxt(id,chapter=false){
-    if(editor)saveEditor();Writer.flush();if(noteEditor)saveNote();
-    const work=chapter?editor?.work:Store.get().works.find(w=>w.id===id);if(!work)return;
-    Writer.exportTxt(work,chapter?editor.chapterId:null);flash(chapter?'本章 TXT 已导出。':'全书 TXT 已导出。');
-  }
-
   function readingSettingsMarkup(){const s=Store.get().settings;return `<div class="settings-fields"><label>阅读背景<select data-setting="theme">${[['paper','纸色'],['warm','暖色'],['night','夜间']].map(([value,label])=>`<option value="${value}" ${s.theme===value?'selected':''}>${label}</option>`).join('')}</select></label><label>字号 <output data-output="fontSize">${s.fontSize}px</output><input type="range" min="13" max="25" value="${s.fontSize}" data-setting="fontSize"></label><label>行距 <output data-output="lineHeight">${s.lineHeight}</output><input type="range" min="1.8" max="2.8" step="0.1" value="${s.lineHeight}" data-setting="lineHeight"></label><label>正文宽度<select data-setting="width">${[600,700,800].map(n=>`<option value="${n}" ${s.width===n?'selected':''}>${n===600?'舒适窄栏':n===700?'标准宽度':'开阔宽栏'}</option>`).join('')}</select></label></div><div class="reading-sample" id="readingSample"><p>窗边的光落在纸页上。故事慢慢展开，每一次翻页，都成为温柔的相逢。</p></div>`}
   function renderSettings(){
-    $('#settingsPage').innerHTML=`<div class="section-head"><div><div class="section-kicker">your preferences</div><h2 tabindex="-1">设置与数据管理</h2></div><button class="outline-button" data-action="home">返回首页</button></div><div class="settings-grid"><section class="settings-card"><h3>把阅读调成喜欢的样子</h3>${readingSettingsMarkup()}<label class="motion-toggle"><input type="checkbox" data-setting="motion" ${Store.get().settings.motion?'checked':''}> 开启纸间动画</label><p class="help-text">系统选择减少动态效果时，动画会自动减少；手机不启用封面悬停效果。</p></section><section class="settings-card"><h3>本机数据，自己掌握</h3><p class="help-text">${Store.get().library.length} 部收藏 · ${Store.get().history.length} 条足迹 · ${Store.get().works.length} 部本地作品 · ${Store.get().inspirationNotes.length} 条灵感便条 · ${Store.get().writingRecords.length} 条写作记录。备份可能含私人文字，请自行妥善保管。</p><div class="data-actions"><button class="solid-button" data-action="export">导出 JSON 备份</button><label class="outline-button import-label">导入备份<input id="backupFile" type="file" accept=".json,application/json"></label></div><p class="help-text">导入会先显示内容数量，经确认后合并；同一作品保留更新时间较新的版本，阅读设置采用备份值。</p><form id="clearDataForm"><h4>选择要清理的数据</h4>${[['library','书架'],['history','阅读足迹'],['feedback','评分与书评'],['settings','阅读设置'],['works','作者作品与章节'],['inspirationNotes','灵感便条'],['writingRecords','写作时间与字数记录'],['authorSettings','每日写作目标']].map(([key,label])=>`<label class="check-row"><input type="checkbox" name="clear" value="${key}"> ${label}</label>`).join('')}<button type="submit" class="outline-button danger-button">清理所选数据</button></form><div class="policy-links"><a href="?view=privacy" data-action="privacy">隐私说明</a><a href="?view=terms" data-action="terms">免费分享声明</a><button class="quiet-button" data-action="notice">技术展示声明</button></div></section></div>`;
+    $('#settingsPage').innerHTML=`<div class="section-head"><div><div class="section-kicker">your preferences</div><h2 tabindex="-1">设置与数据管理</h2></div><button class="outline-button" data-action="home">返回首页</button></div><div class="settings-grid"><section class="settings-card"><h3>把阅读调成喜欢的样子</h3>${readingSettingsMarkup()}<label class="motion-toggle"><input type="checkbox" data-setting="motion" ${Store.get().settings.motion?'checked':''}> 开启纸间动画</label><p class="help-text">系统选择减少动态效果时，动画会自动减少；手机不启用封面悬停效果。</p></section><section class="settings-card"><h3>本机数据，自己掌握</h3><p class="help-text">${Store.get().library.length} 部收藏 · ${Store.get().history.length} 条足迹 · ${Store.get().works.length} 部本地作品 · ${Store.get().inspirationNotes.length} 条灵感便条 · ${Store.get().writingRecords.length} 条写作记录。备份可能含私人文字，请自行妥善保管。</p><div class="data-actions"><button class="solid-button" data-action="export">导出 JSON 备份</button><label class="outline-button import-label">导入备份<input id="backupFile" type="file" accept=".json,application/json"></label></div><p class="help-text">导入会先显示内容数量，经确认后合并；同一作品保留更新时间较新的版本，阅读设置采用备份值。</p><p id="backupStatus" role="status" class="help-text"></p><form id="clearDataForm"><h4>选择要清理的数据</h4>${[['library','书架'],['history','阅读足迹'],['feedback','评分与书评'],['settings','阅读设置'],['works','作者作品与章节'],['inspirationNotes','灵感便条'],['writingRecords','写作时间与字数记录'],['authorSettings','每日写作目标'],['workspaces','大纲、人物关系与伏笔'],['chapterSnapshots','章节历史快照']].map(([key,label])=>`<label class="check-row"><input type="checkbox" name="clear" value="${key}"> ${label}</label>`).join('')}<button type="submit" class="outline-button danger-button">清理所选数据</button></form><div class="policy-links"><a href="?view=privacy" data-action="privacy">隐私说明</a><a href="?view=terms" data-action="terms">免费分享声明</a><button class="quiet-button" data-action="notice">技术展示声明</button></div></section></div>`;
   }
   function applySettings(){
     const s=Store.get().settings,reduced=matchMedia('(prefers-reduced-motion: reduce)').matches;
@@ -412,27 +246,18 @@
     Store.change(d=>{d.settings=Store.settings({...d.settings,[key]:value})});applySettings();
     if(activeBook){restoring=true;const token=renderToken;requestAnimationFrame(()=>{if(token!==renderToken)return;$('#readerLayer').scrollTop=readingRange()*progress/100;restoring=false;saveProgress()})}
   }
-  function exportBackup(){
-    if(editor)saveEditor();if(noteEditor)saveNote();Writer.flush();
-    Writer.download(new Blob([JSON.stringify(Store.backup(),null,2)],{type:'application/json'}),`折纸文学备份-${Writer.dayKey()}.json`);flash('备份已导出，请妥善保存。');
-  }
-  async function importBackup(file){
-    if(!file)return;try{
-      if(file.size>10*1024*1024)throw Error('备份超过 10 MB，请拆分后导入');
-      const incoming=Store.parseBackup(await file.text()),comments=Object.values(incoming.comments).reduce((n,list)=>n+list.length,0);
-      const result=await dialog('确认合并备份',`<p class="notice-copy">此文件包含 ${incoming.library.length} 部收藏、${incoming.history.length} 条阅读记录、${incoming.works.length} 部作品（${incoming.works.reduce((n,w)=>n+w.chapters.length,0)} 章）、${comments} 条书评、${incoming.inspirationNotes.length} 条灵感便条和 ${incoming.writingRecords.length} 条写作记录。</p><p class="notice-copy">合并后保留更新时间较新的作品，阅读设置采用备份值；不会上传文件。</p>`,[{value:'cancel',label:'取消'},{value:'merge',label:'确认合并',primary:true}]);
-      if(result==='merge'){Store.merge(incoming);renderSettings();applySettings();saved('备份已合并')}
-    }catch(error){await dialog('无法导入备份',`<p class="notice-copy">${esc(error.message)}</p>`)}finally{if($('#backupFile'))$('#backupFile').value=''}
-  }
+  async function exportBackup(){Author.flush();return exportCompleteBackup();}
+  const importBackup=file=>Backup.import(file);
+  const exportCompleteBackup=()=>Backup.export();
   async function clearData(form){
     const keys=new FormData(form).getAll('clear');if(!keys.length)return flash('请先选择要清理的数据。');
     const result=await dialog('确认清理本机数据','<p class="notice-copy">所选数据会从本站本地存储中删除。需要保留时，请先导出备份。</p>',[{value:'cancel',label:'取消'},{value:'clear',label:'确认清理',primary:true}]);if(result!=='clear')return;
-    if(keys.includes('works')){const authorResult=await dialog('将删除作者作品与全部章节',`<p class="notice-copy">共有 ${Store.get().works.length} 部本地作品。灵感便条与写作记录仅在单独勾选时清理。此操作无法撤销，请确认已保存所需备份。</p>`,[{value:'cancel',label:'保留作品'},{value:'clear',label:'确认删除作者数据',primary:true}]);if(authorResult!=='clear')return}
-    Store.clear(keys);dismissUndo();renderSettings();applySettings();saved('所选本机数据已清理');
+    if(keys.includes('works')){const authorResult=await dialog('将删除作者作品与全部章节',`<p class="notice-copy">共有 ${Store.get().works.length} 部本地作品。灵感便条、写作记录、创作设定和历史快照仅在单独勾选时清理。此操作无法撤销，请确认已保存所需备份。</p>`,[{value:'cancel',label:'保留作品'},{value:'clear',label:'确认删除作者数据',primary:true}]);if(authorResult!=='clear')return}
+    if(keys.includes('chapterSnapshots')){try{await window.ZhezhiSnapshots.clear()}catch(error){flash(error.message);return}}Store.clear(keys);if(keys.includes('writingRecords'))Writer.resetRecords();dismissUndo();renderSettings();applySettings();saved('所选本机数据已清理');
   }
   function renderPolicy(kind){
     const privacy=kind==='privacy';
-    const text=privacy?`<h3>哪些数据保存在这里</h3><p>书架与阅读状态、足迹与章节进度、阅读及动画设置、评分、书评、作者作品和章节、灵感便条、写作时间与净增字数记录、每日目标，均保存在当前浏览器的本地存储。本站没有账号注册、广告、统计追踪或主动上传个人数据的功能。作者阅读预览仅使用本地草稿，不会自动发布。</p><h3>保存期限与管理方式</h3><p>本地数据持续保存到你主动清理或浏览器删除为止。可以在“设置与数据管理”导出 JSON 备份、导入备份或分类删除。TXT 可导出全书或本章正文，完整恢复请使用 JSON 备份；灵感便条与写作记录可独立清理。清理作者作品需再次确认。浏览器存储受限时，内容可能仅暂存于当前页面，刷新会丢失；页面会显示提示。</p><h3>备份与设备使用</h3><p>备份文件可能含有私人稿件和书评，请自行保管。共享电脑上的其他使用者可能访问本机数据。导入备份在浏览器内处理，不上传到服务器。</p><h3>离线缓存</h3><p>网站使用 Service Worker 缓存公开页面、图标与演示章节，以供离线访问；缓存不包含你的私人草稿。更新后清理本站旧版本缓存。你可以通过浏览器的网站数据设置清理离线资源。</p><h3>托管平台与外部链接</h3><p>本站使用 GitHub Pages 托管。GitHub Pages 会为安全目的记录访问者 IP，具体处理由 <a href="https://docs.github.com/en/pages/getting-started-with-github-pages/what-is-github-pages" target="_blank" rel="noopener noreferrer">GitHub Pages 官方说明</a>与 <a href="https://docs.github.com/en/site-policy/privacy-policies/github-general-privacy-statement" target="_blank" rel="noopener noreferrer">GitHub 隐私声明</a>说明。点击贴吧或 GitHub 反馈入口后，将进入第三方网站，其规则适用于后续访问。</p><h3>联系与反馈</h3><p>可通过 <a href="https://github.com/06-cat-tea/-/issues" target="_blank" rel="noopener noreferrer">仓库公开反馈区</a>提出功能或隐私问题。反馈内容公开可见，请勿提交私人稿件、密码、联系方式或其他个人信息。</p>`:`<h3>免费阅读，免费分享</h3><p>折纸文学用于技术展示与故事交流，免费阅读、免费分享、非商业用途，不提供收费章节、会员订阅、付费解锁、广告或支付功能。</p><h3>演示内容与创作预览</h3><p>站内《雾台照微》及其他示例内容用于展示书库和阅读交互，榜单与更新数据为演示数据。作者中心是本地创作空间，本地预览不构成公开发表，也不会自动上传作品。</p><h3>作品版权与使用范围</h3><p>作品、封面及其他内容的权利归各自权利人。免费浏览与分享本站链接不改变版权归属，也不授予任意转载、改编、再分发或商业使用的许可。需要使用作品内容时，应取得相应权利人的授权。</p><h3>分享与反馈</h3><p>欢迎分享公开作品链接与网站体验。分享链接不会包含你的本地草稿、书评或阅读记录。对内容权属有疑问时，可在 <a href="https://github.com/06-cat-tea/-/issues" target="_blank" rel="noopener noreferrer">公开反馈区</a>提供公开页面位置和问题描述，请勿附上私人稿件或个人信息。</p>`;
+    const text=privacy?`<h3>哪些数据保存在这里</h3><p>书架与阅读状态、足迹与章节进度、阅读及动画设置、评分、书评、作者作品和章节、灵感便条、写作时间与净增字数记录、每日目标、大纲、人物关系和伏笔，均保存在当前浏览器的本地存储；章节快照保存在此浏览器的 IndexedDB 历史库。本站没有账号注册、广告、统计追踪或主动上传个人数据的功能。作者阅读预览仅使用本地草稿，不会自动发布。</p><h3>保存期限与管理方式</h3><p>本地数据持续保存到你主动清理或浏览器删除为止。可以在“设置与数据管理”导出 JSON 备份、导入备份或分类删除。TXT 可导出全书或本章正文，完整恢复请使用包含创作设定与快照的 JSON 备份（单个文件最多 50 MB，超限可选历史分批导出）；灵感便条与写作记录可独立清理。清理作者作品需再次确认。浏览器存储受限时，内容可能仅暂存于当前页面，刷新会丢失；页面会显示提示。</p><h3>备份与设备使用</h3><p>备份文件可能含有私人稿件和书评，请自行保管。共享电脑上的其他使用者可能访问本机数据。导入备份在浏览器内处理，不上传到服务器。</p><h3>离线缓存</h3><p>网站使用 Service Worker 缓存公开页面、图标与演示章节，以供离线访问；缓存不包含你的私人草稿。更新后清理本站旧版本缓存。你可以通过浏览器的网站数据设置清理离线资源。</p><h3>托管平台与外部链接</h3><p>本站使用 GitHub Pages 托管。GitHub Pages 会为安全目的记录访问者 IP，具体处理由 <a href="https://docs.github.com/en/pages/getting-started-with-github-pages/what-is-github-pages" target="_blank" rel="noopener noreferrer">GitHub Pages 官方说明</a>与 <a href="https://docs.github.com/en/site-policy/privacy-policies/github-general-privacy-statement" target="_blank" rel="noopener noreferrer">GitHub 隐私声明</a>说明。点击贴吧或 GitHub 反馈入口后，将进入第三方网站，其规则适用于后续访问。</p><h3>联系与反馈</h3><p>可通过 <a href="https://github.com/06-cat-tea/-/issues" target="_blank" rel="noopener noreferrer">仓库公开反馈区</a>提出功能或隐私问题。反馈内容公开可见，请勿提交私人稿件、密码、联系方式或其他个人信息。</p>`:`<h3>免费阅读，免费分享</h3><p>折纸文学用于技术展示与故事交流，免费阅读、免费分享、非商业用途，不提供收费章节、会员订阅、付费解锁、广告或支付功能。</p><h3>演示内容与创作预览</h3><p>站内《雾台照微》及其他示例内容用于展示书库和阅读交互，榜单与更新数据为演示数据。作者中心是本地创作空间，本地预览不构成公开发表，也不会自动上传作品。</p><h3>作品版权与使用范围</h3><p>作品、封面及其他内容的权利归各自权利人。免费浏览与分享本站链接不改变版权归属，也不授予任意转载、改编、再分发或商业使用的许可。需要使用作品内容时，应取得相应权利人的授权。</p><h3>分享与反馈</h3><p>欢迎分享公开作品链接与网站体验。分享链接不会包含你的本地草稿、书评或阅读记录。对内容权属有疑问时，可在 <a href="https://github.com/06-cat-tea/-/issues" target="_blank" rel="noopener noreferrer">公开反馈区</a>提供公开页面位置和问题描述，请勿附上私人稿件或个人信息。</p>`;
     $('#policyPage').innerHTML=`<div class="section-head"><div><div class="section-kicker">折纸文学 · 纸间约定</div><h2 tabindex="-1">${privacy?'隐私说明':'免费分享声明'}</h2></div><button class="outline-button" data-action="home">返回首页</button></div><article class="policy-card"><p class="policy-date">更新于 2026 年 10 月 12 日</p>${text}<div class="policy-links"><button class="outline-button" data-action="settings">设置与数据管理</button><a class="text-link" href="?view=${privacy?'terms':'privacy'}" data-action="${privacy?'terms':'privacy'}">${privacy?'免费分享声明':'隐私说明'} →</a></div></article>`;
   }
 
@@ -456,6 +281,7 @@
     catch(error){if(error.name!=='AbortError')await dialog('复制章节链接',`<label class="field"><span>选择并复制链接</span><input readonly value="${esc(url)}" aria-label="章节分享链接"></label>`)}
   }
   async function action(name,button){
+    if(Author.handlesAction(name))return Author.action(name,button);
     const id=button?.dataset.id;
     switch(name){
       case 'home':return go({kind:'home',anchor:'home'});
@@ -488,25 +314,8 @@
       case 'theme':{const themes=['paper','warm','night'];return setSetting('theme',themes[(themes.indexOf(Store.get().settings.theme)+1)%3])}
       case 'reading-settings':{const p=dialog('阅读设置',readingSettingsMarkup(),[{value:'ok',label:'完成',primary:true}]);applySettings();return p}
       case 'share':return share();
-      case 'new-work':if(await guardEditor())newWork();return;
-      case 'author-tab':return go({kind:'author',tab:button.dataset.tab});
-      case 'writer-focus':return setWriterFocus(!document.body.classList.contains('writer-focus'));
-      case 'writer-pause':return Writer.togglePause();
-      case 'writer-goal':return editWriterGoal();
-      case 'export-txt':return exportWorkTxt(id);
-      case 'export-chapter-txt':return exportWorkTxt(null,true);
-      case 'new-note':return openNote(null,button.dataset.work||null);
-      case 'edit-note':return openNote(id);
-      case 'delete-note':return deleteNote(id);
-      case 'pin-note':Store.change(d=>{const note=d.inspirationNotes.find(n=>n.id===id);if(note){note.pinned=!note.pinned;note.updatedAt=now()}});renderNoteList();renderWorkNotes();return;
-      case 'edit-work':return go({kind:'author',work:id});
-      case 'save-work':saveEditor();saved('作品已保存到本机');return;
-      case 'edit-chapter':saveEditor();return go({kind:'author',work:editor.work.id,chapter:id},{replace:true,skipGuard:true});
-      case 'add-chapter':case 'chapter-up':case 'chapter-down':case 'delete-chapter':return mutateChapter(name,id);
-      case 'preview':{if(!editor)return;saveEditor();return go({kind:'reader',preview:true,work:editor.work.id,chapter:editor.work.chapters.findIndex(c=>c.id===editor.chapterId)},{skipGuard:true})}
-      case 'delete-work':{const work=Store.clone(Store.get().works.find(w=>w.id===id));Store.change(d=>{d.works=d.works.filter(w=>w.id!==id)});renderAuthor(route);offerUndo('作品与章节已删除',()=>{Store.change(d=>{if(!d.works.some(w=>w.id===id))d.works.unshift(work)});refreshCurrentAuthor()});return}
       case 'export':return exportBackup();
-      case 'undo':{const fn=undoAction;dismissUndo();fn?.();saved('已撤销删除');return}
+      case 'undo':{const fn=undoAction;dismissUndo();await fn?.();saved('已撤销删除');return}
       case 'dismiss-undo':return dismissUndo();
     }
   }
@@ -518,35 +327,23 @@
     if(event.target.id==='utilityLayer')finishDialog('cancel');
   });
   document.addEventListener('input',event=>{
-    const el=event.target;
+    const el=event.target;Author.input(event);
     if(el.id==='librarySearch'){ui.search=el.value.trim();ui.page=1;renderBooks();saveUI()}
     if(el.id==='chapterSearch')renderChapterList();
-    if(el.id==='authorWorkSearch'){authorUi.search=el.value;renderWorkList()}
-    if(el.id==='authorChapterSearch'){authorUi.chapterSearch=el.value;renderAuthorChapters()}
-    if(el.id==='noteSearch'){authorUi.noteSearch=el.value;renderNoteList()}
-    if(el.closest('#noteForm')&&noteEditor)noteInput();
     if(el.id==='commentInput')$('#commentCount').textContent=`${el.value.length} / 300`;
-    if(el.closest('#workForm')&&editor){collectEditor();editor.dirty=true;if(el.name==='content')Writer.activity();$('#saveStatus').textContent='尚未保存 · 正在等待输入结束';scheduleSave();updateAuthorStats()}
     if(el.dataset.setting){const key=el.dataset.setting,value=key==='motion'?el.checked:['fontSize','lineHeight','width'].includes(key)?Number(el.value):el.value;setSetting(key,value)}
   });
   document.addEventListener('change',event=>{
-    const el=event.target;
+    const el=event.target;Author.change(event);
     if(el.id==='bookSort'){ui.sort=el.value;ui.page=1;renderBooks();saveUI()}
-    if(el.id==='authorWorkSort'){authorUi.sort=el.value;renderWorkList()}
-    if(el.id==='noteWorkFilter'){authorUi.noteWork=el.value;renderNoteList()}
-    if(el.id==='recordWorkFilter'){authorUi.recordWork=el.value;renderRecordRows()}
-    if(el.closest('#noteForm')&&noteEditor)noteInput();
     if(el.id==='shelfFilter'){ui.shelf=el.value;renderShelf();saveUI()}
     if(el.dataset.shelfId){Store.change(d=>{const row=d.library.find(r=>r.id===el.dataset.shelfId);if(row)row.status=el.value});saved('阅读状态已更新')}
     if(el.id==='readerChapterSelect')go({...route,chapter:Number(el.value)},{replace:true});
     if(el.id==='backupFile')importBackup(el.files[0]);
   });
   document.addEventListener('submit',event=>{
-    const form=event.target;
-    if(['librarySearchForm','workForm','commentForm','clearDataForm','noteForm','writerGoalForm'].includes(form.id))event.preventDefault();
-    if(form.id==='noteForm')saveNote();
-    if(form.id==='writerGoalForm'&&form.reportValidity())finishDialog('save');
-    if(form.id==='workForm'){saveEditor();saved('作品已保存到本机')}
+    const form=event.target;if(Author.submit(event))return;
+    if(['librarySearchForm','commentForm','clearDataForm'].includes(form.id))event.preventDefault();
     if(form.id==='clearDataForm')clearData(form);
     if(form.id==='commentForm'&&activeBook&&!route.preview){const text=$('#commentInput').value.trim();if(!text)return flash('先写下你的读后感吧。');Store.change(d=>{const list=d.comments[activeBook.id]||[];list.unshift({id:Store.uuid(),text,createdAt:now()});d.comments[activeBook.id]=list.slice(0,30)});renderFeedback();saved('书评已保存到本机')}
   });
@@ -557,21 +354,20 @@
     if(skipPop){skipPop=false;return}
     const oldIndex=window.__zhezhiIndex||0,newIndex=event.state?.index||0;
     if(!await guardEditor()){skipPop=true;history.go(oldIndex-newIndex||1);return}
-    saveProgress();window.__zhezhiIndex=newIndex;renderRoute(parseRoute(),event.state||{});
+    await Author.leave();saveProgress();window.__zhezhiIndex=newIndex;renderRoute(parseRoute(),event.state||{});
   });
-  window.addEventListener('beforeunload',event=>{saveProgress();Writer.pause();if(editor&&(editor.dirty||!Store.isDurable())||noteEditor&&(noteEditor.dirty||!Store.isDurable())){event.preventDefault();event.returnValue=''}});
-  window.addEventListener('pagehide',()=>{saveProgress();if(editor?.dirty)saveEditor();if(noteEditor?.dirty)saveNote();Writer.pause();saveUI()});
-  document.addEventListener('visibilitychange',()=>{document.documentElement.classList.toggle('page-paused',document.hidden);if(document.hidden){Writer.pause();saveProgress();if(editor?.dirty)saveEditor();if(noteEditor?.dirty)saveNote()}});
-  document.addEventListener('compositionstart',event=>{if(event.target.closest('#workForm')&&editor){editor.composing=true;clearTimeout(saveTimer)}if(event.target.closest('#noteForm')&&noteEditor){noteEditor.composing=true;clearTimeout(noteTimer)}});
-  document.addEventListener('compositionend',event=>{if(event.target.closest('#workForm')&&editor){editor.composing=false;scheduleSave()}if(event.target.closest('#noteForm')&&noteEditor){noteEditor.composing=false;noteInput()}});
+  window.addEventListener('beforeunload',event=>{saveProgress();Writer.pause();if(Author.hasUnsaved()){event.preventDefault();event.returnValue=''}});
+  window.addEventListener('pagehide',()=>{saveProgress();Author.persist();Author.leave();saveUI()});
+  document.addEventListener('visibilitychange',()=>{document.documentElement.classList.toggle('page-paused',document.hidden);if(document.hidden){saveProgress();Author.persist();Author.leave()}});
+  document.addEventListener('compositionstart',event=>Author.composition(event,true));
+  document.addEventListener('compositionend',event=>Author.composition(event,false));
   window.addEventListener('resize',applySettings);
   matchMedia('(prefers-reduced-motion: reduce)').addEventListener('change',applySettings);
   window.addEventListener('zhezhi-storage',storageStatus);
-  window.addEventListener('zhezhi-writing',updateAuthorStats);
   document.addEventListener('keydown',event=>{
     const top=topLayer();
-    if((event.ctrlKey||event.metaKey)&&event.key.toLowerCase()==='s'&&!event.isComposing&&(noteEditor||editor&&!top)){event.preventDefault();if(noteEditor)saveNote();else{saveEditor();saved('作品已保存到本机')}return}
-    if(!top){if(event.key==='Escape'&&document.body.classList.contains('writer-focus')){event.preventDefault();setWriterFocus(false)}return}
+    if(Author.keydown(event))return;
+    if(!top)return;
     if(event.key==='Escape'){event.preventDefault();if(top.id==='utilityLayer')finishDialog('cancel');else if(top.id==='showcaseNotice')closeNotice(true);else action(top.id==='readerLayer'?'close-reader':'close-detail');return}
     if(event.key==='Tab'){
       const items=[...top.querySelectorAll('a[href],button:not(:disabled),input,select,textarea,[tabindex="0"]')].filter(el=>el.getClientRects().length&&!el.closest('[inert]')),first=items[0],last=items.at(-1);if(!first)return;
@@ -587,6 +383,8 @@
   },{passive:true});
   document.addEventListener('pointerout',event=>{const cover=event.target.closest('.book-card .cover');if(cover&&!cover.contains(event.relatedTarget)){cover.style.setProperty('--tilt-x','0deg');cover.style.setProperty('--tilt-y','0deg')}});
   // Track the active history index after application navigation too.
+  const Backup=window.ZhezhiBackup.create({dialog,flash,saved,onMerged:()=>{renderSettings();if(route.kind==='author')Author.render(route);applySettings()}});
+  const Author=window.ZhezhiAuthor.create({$,$$,esc,now,count,wordCount:window.ZhezhiUtils.wordCount,flash,saved,offerUndo,dialog,finishDialog,topLayer,go,observeReveals,getRoute:()=>route,setRoute:target=>{route=target},routeURL,exportBackup});
   const initial=parseRoute();history.replaceState({...history.state,zhezhi:true,index:history.state?.index||0},'',location.href);
   window.__zhezhiIndex=history.state.index;
   renderRoute(initial,history.state);storageStatus();

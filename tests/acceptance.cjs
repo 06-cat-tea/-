@@ -2,27 +2,12 @@
 const assert=require('node:assert/strict');
 const fs=require('node:fs');
 const path=require('node:path');
-const http=require('node:http');
-const {chromium}=require(process.env.PLAYWRIGHT_PATH||'playwright');
-const root=path.resolve(__dirname,'..');
-const artifacts=path.join(root,'.cache','acceptance');fs.mkdirSync(artifacts,{recursive:true});
-const server=http.createServer((req,res)=>{
-  let file=decodeURIComponent(new URL(req.url,'http://localhost').pathname).replace(/^\/-\//,'');
-  if(!file||file==='/'||file==='index.html')file='index.html';
-  if(!['index.html','sw.js','icon.svg','manifest.webmanifest','novel-data/jinli.js'].includes(file)&&!/^assets\/[\w.-]+\.(js|css)$/.test(file)){res.writeHead(404);return res.end()}
-  const target=path.join(root,file);
-  if(!fs.existsSync(target)){res.writeHead(404);return res.end()}
-  const types={'.html':'text/html; charset=utf-8','.js':'application/javascript; charset=utf-8','.css':'text/css; charset=utf-8','.svg':'image/svg+xml','.webmanifest':'application/manifest+json'};
-  res.writeHead(200,{'Content-Type':types[path.extname(file)]||'text/plain','Cache-Control':'no-store'});res.end(fs.readFileSync(target));
-});
+const {chromium,root,artifacts,createServer,click,acknowledge,data,verifyNoOverflow,mergeBackup}=require('./browser-harness.cjs');
+const server=createServer();
 let browser;
 const failures=[],checks=[];
 async function check(name,fn){await fn();checks.push(name);console.log('PASS '+name)}
-async function click(page,action){await page.locator(`[data-action="${action}"]:visible:not([inert] *)`).first().click()}
 async function settle(page){await page.waitForTimeout(120)}
-async function acknowledge(page){if(await page.locator('#showcaseNotice.open').count())await click(page,'ack-notice')}
-async function data(page){return page.evaluate(()=>window.ZhezhiStore.get())}
-async function verifyNoOverflow(page){assert(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1),'horizontal page overflow')}
 (async()=>{
   await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));
   const base=`http://127.0.0.1:${server.address().port}/-/`;
@@ -31,7 +16,7 @@ async function verifyNoOverflow(page){assert(await page.evaluate(()=>document.do
   const page=await context.newPage();page.setDefaultTimeout(10000);page.on('pageerror',error=>failures.push(error.message));
   const external=[];page.on('request',request=>{if(!request.url().startsWith(base)&&!request.url().startsWith('data:'))external.push(request.url())});
   await context.addInitScript(()=>{
-    if(!localStorage.getItem('zhezhi-local-v3')){
+    if(!localStorage.getItem('zhezhi-local-v4')){
       localStorage.setItem('zhezhi-library',JSON.stringify(['b1']));
       localStorage.setItem('zhezhi-history',JSON.stringify([{id:'b1',chapterIndex:0,progress:42,readAt:'2026-10-10T10:00:00.000Z'}]));
       localStorage.setItem('zhezhi-drafts',JSON.stringify([{title:'旧草稿',description:'迁移测试',category:'日常',content:'旧章节正文',createdAt:'2026-10-10T10:00:00.000Z'}]));
@@ -89,7 +74,7 @@ async function verifyNoOverflow(page){assert(await page.evaluate(()=>document.do
     await click(page,'settings');await page.locator('#settingsPage').waitFor({state:'visible'});await page.locator('[data-setting="theme"]').selectOption('night');await page.locator('[data-setting="width"]').selectOption('800');await page.locator('[data-setting="fontSize"]').focus();await page.keyboard.press('End');await page.locator('[data-setting="motion"]').uncheck();assert.equal((await data(page)).settings.fontSize,25);assert(await page.locator('html').evaluate(el=>el.classList.contains('motion-off')));
     await page.locator('#backupFile').setInputFiles({name:'bad.json',mimeType:'application/json',buffer:Buffer.from('{"not":"a backup"}')});await page.locator('#utilityLayer.open').waitFor();assert((await page.locator('#utilityContent').textContent()).includes('备份文件'));await page.locator('[data-dialog-result="ok"]').click();
     const incoming=JSON.parse(JSON.stringify(backup));incoming.data.works.push({id:'imported-work',title:'<img src=x onerror=alert(1)>',description:'',category:'日常',createdAt:'2026-10-12T00:00:00Z',updatedAt:'2026-10-12T00:00:00Z',chapters:[{id:'imported-chapter',title:'第一章',content:'导入正文'}]});
-    await page.locator('#backupFile').setInputFiles({name:'backup.json',mimeType:'application/json',buffer:Buffer.from(JSON.stringify(incoming))});await page.locator('#utilityLayer.open').waitFor();assert((await data(page)).works.length===1);await page.locator('[data-dialog-result="merge"]').click();assert.equal((await data(page)).works.length,2);
+    await page.locator('#backupFile').setInputFiles({name:'backup.json',mimeType:'application/json',buffer:Buffer.from(JSON.stringify(incoming))});await page.locator('#utilityLayer.open').waitFor();assert((await data(page)).works.length===1);await mergeBackup(page);assert.equal((await data(page)).works.length,2);
     await page.locator('[name="clear"][value="works"]').check();await page.locator('#clearDataForm button').click();await page.locator('[data-dialog-result="clear"]').click();await page.locator('#utilityTitle').filter({hasText:'将删除作者'}).waitFor();await page.locator('[data-dialog-result="cancel"]').click();assert.equal((await data(page)).works.length,2);
     await click(page,'author');assert.equal(await page.locator('img').count(),0);
   });
@@ -99,7 +84,7 @@ async function verifyNoOverflow(page){assert(await page.evaluate(()=>document.do
   await check('offline shell and cache-version cleanup',async()=>{
     await page.evaluate(async()=>{await navigator.serviceWorker.ready;if(!navigator.serviceWorker.controller)await new Promise(resolve=>navigator.serviceWorker.addEventListener('controllerchange',resolve,{once:true}))});
     await page.goto(base);await acknowledge(page);await context.setOffline(true);await page.reload();assert.equal(await page.locator('.book-card').count(),6);await context.setOffline(false);
-    assert((await page.evaluate(()=>caches.keys())).includes('zhezhi-literature-author-20261012-1'));
+    assert((await page.evaluate(()=>caches.keys())).includes('zhezhi-literature-studio-20261012-1'));
     const staleContext=await browser.newContext(),stalePage=await staleContext.newPage();await stalePage.route('**/assets/app.js*',r=>r.abort());await stalePage.goto(base);await stalePage.evaluate(()=>caches.open('zhezhi-literature-obsolete'));await stalePage.unroute('**/assets/app.js*');await stalePage.reload();await acknowledge(stalePage);await stalePage.evaluate(async()=>{await navigator.serviceWorker.ready;if(!navigator.serviceWorker.controller)await new Promise(resolve=>navigator.serviceWorker.addEventListener('controllerchange',resolve,{once:true}))});assert(!(await stalePage.evaluate(()=>caches.keys())).includes('zhezhi-literature-obsolete'));await staleContext.close();
   });
   const mobile=await browser.newContext({viewport:{width:390,height:844},reducedMotion:'reduce'}),mobilePage=await mobile.newPage();mobilePage.on('pageerror',e=>failures.push(e.message));
@@ -126,9 +111,9 @@ async function verifyNoOverflow(page){assert(await page.evaluate(()=>document.do
   authorPage.on('pageerror',e=>failures.push(e.message));authorPage.on('request',r=>{if(!r.url().startsWith(base)&&!r.url().startsWith('data:'))external.push(r.url())});
   const seed=JSON.parse(JSON.stringify(backup.data));seed.version=2;delete seed.authorSettings;delete seed.inspirationNotes;delete seed.writingRecords;
   seed.works=[{id:'migration-work',title:'迁移作品',description:'TXT 简介',category:'日常',createdAt:'2026-10-12T00:00:00Z',updatedAt:'2026-10-12T00:00:00Z',chapters:[{id:'chapter-a',title:'第一章 中文',content:'中文初稿'},{id:'chapter-b',title:'第二章 空章',content:''}]},{id:'other-work',title:'另一作品',description:'',category:'日常',createdAt:'2026-10-11T00:00:00Z',updatedAt:'2026-10-11T00:00:00Z',chapters:[{id:'other-chapter',title:'别的章节',content:'这是另一部拥有更多字数的作品正文。'}]}];
-  await authorContext.addInitScript(seed=>{if(!localStorage.getItem('zhezhi-local-v3')&&!localStorage.getItem('zhezhi-local-v2'))localStorage.setItem('zhezhi-local-v2',JSON.stringify(seed))},seed);
+  await authorContext.addInitScript(seed=>{if(!localStorage.getItem('zhezhi-local-v4')&&!localStorage.getItem('zhezhi-local-v2'))localStorage.setItem('zhezhi-local-v2',JSON.stringify(seed))},seed);
   await check('author v2 migration, search and work sorting',async()=>{
-    await authorPage.goto(base+'?view=author');await acknowledge(authorPage);const current=await data(authorPage);assert.equal(current.version,3);assert.equal(current.works[0].id,'migration-work');assert.equal(current.works[0].chapters[0].id,'chapter-a');assert.equal(current.authorSettings.dailyWordGoal,2000);
+    await authorPage.goto(base+'?view=author');await acknowledge(authorPage);const current=await data(authorPage);assert.equal(current.version,4);assert.equal(current.works[0].id,'migration-work');assert.equal(current.works[0].chapters[0].id,'chapter-a');assert.equal(current.authorSettings.dailyWordGoal,2000);
     assert.equal(await authorPage.locator('#authorTabs button').count(),3);await authorPage.locator('#authorWorkSearch').fill('迁移');assert.equal(await authorPage.locator('.work-card').count(),1);assert.equal(await authorPage.locator('#authorWorkSearch').inputValue(),'迁移');await authorPage.locator('#authorWorkSearch').fill('');await authorPage.locator('#authorWorkSort').selectOption('words');assert((await authorPage.locator('.work-card h3').first().textContent()).includes('另一'));await authorPage.locator('#authorWorkSort').selectOption('latest');assert((await authorPage.locator('.work-card h3').first().textContent()).includes('迁移'));
   });
   async function txtDownload(page,selector){const downloading=page.waitForEvent('download');await page.locator(selector).click();const download=await downloading;return {bytes:fs.readFileSync(await download.path()),name:download.suggestedFilename()}}
@@ -157,7 +142,7 @@ async function verifyNoOverflow(page){assert(await page.evaluate(()=>document.do
     await authorPage.locator(`[data-action="edit-note"][data-id="${linkedNoteId}"]`).click();await authorPage.locator('[name="noteContent"]').fill('修改后立即关闭的便条');await authorPage.locator('[name="noteWork"]').selectOption('other-work');await authorPage.locator('[data-action="close-utility"]').click();assert.equal((await data(authorPage)).inspirationNotes.find(n=>n.id===linkedNoteId).workId,'other-work');assert.equal((await data(authorPage)).inspirationNotes.find(n=>n.id===linkedNoteId).content,'修改后立即关闭的便条');assert.equal(await authorPage.locator('#noteList img').count(),0);await authorPage.screenshot({path:path.join(artifacts,'desktop-notes.png'),fullPage:true});
   });
   await check('deleted works preserve notes and statistics; undo restores association',async()=>{
-    await authorPage.locator('#authorTabs [data-tab="works"]').click();const wordsBefore=sumWords(await data(authorPage));await authorPage.locator('[data-action="delete-work"][data-id="other-work"]').click();await authorPage.locator('#authorTabs [data-tab="notes"]').click();assert((await authorPage.locator('#noteList').textContent()).includes('原作品已删除'));assert.equal((await data(authorPage)).inspirationNotes.length,2);assert.equal(sumWords(await data(authorPage)),wordsBefore);await click(authorPage,'undo');assert.equal((await data(authorPage)).works.length,2);assert((await authorPage.locator('#noteList').textContent()).includes('另一作品'));
+    await authorPage.locator('#authorTabs [data-tab="works"]').click();const wordsBefore=sumWords(await data(authorPage));await authorPage.locator('[data-action="delete-work"][data-id="other-work"]').click();await authorPage.locator('[data-dialog-result="delete-work"]').click();await authorPage.locator('#authorTabs [data-tab="notes"]').click();assert((await authorPage.locator('#noteList').textContent()).includes('原作品已删除'));assert.equal((await data(authorPage)).inspirationNotes.length,2);assert.equal(sumWords(await data(authorPage)),wordsBefore);await click(authorPage,'undo');assert.equal((await data(authorPage)).works.length,2);assert((await authorPage.locator('#noteList').textContent()).includes('另一作品'));
     await authorPage.locator('#authorTabs [data-tab="records"]').click();assert.equal(await authorPage.locator('#recordRows tr').count(),30);await authorPage.locator('#recordWorkFilter').selectOption('other-work');assert((await authorPage.locator('#recordSummary').textContent()).includes('0 分 0 秒'));await authorPage.locator('#recordWorkFilter').selectOption('migration-work');assert((await authorPage.locator('#recordRows tr').first().textContent()).includes(String(wordsBefore)));await authorPage.screenshot({path:path.join(artifacts,'desktop-writing-records.png'),fullPage:true});
   });
   await check('daily goal changes and closure survive backup and refresh',async()=>{
@@ -167,10 +152,10 @@ async function verifyNoOverflow(page){assert(await page.evaluate(()=>document.do
     await authorPage.screenshot({path:path.join(artifacts,'desktop-author-editor.png'),fullPage:true});
   });
   await check('v3 backup roundtrip, repeated merge and independent category cleanup',async()=>{
-    await click(authorPage,'settings');const downloading=authorPage.waitForEvent('download');await authorPage.locator('#settingsPage [data-action="export"]').click();const authorBackup=JSON.parse(fs.readFileSync(await(await downloading).path(),'utf8')),before=await data(authorPage);assert.equal(authorBackup.data.version,3);assert.equal(authorBackup.data.inspirationNotes.length,2);assert.equal(authorBackup.data.authorSettings.dailyWordGoal,0);
-    for(let i=0;i<2;i++){await authorPage.locator('#backupFile').setInputFiles({name:'author.json',mimeType:'application/json',buffer:Buffer.from(JSON.stringify(authorBackup))});await authorPage.locator('[data-dialog-result="merge"]').click();assert.equal((await data(authorPage)).inspirationNotes.length,2);assert.equal(sumWords(await data(authorPage)),sumWords(before));assert.equal(sumTime(await data(authorPage)),sumTime(before))}
+    await click(authorPage,'settings');const downloading=authorPage.waitForEvent('download');await authorPage.locator('#settingsPage [data-action="export"]').click();const authorBackup=JSON.parse(fs.readFileSync(await(await downloading).path(),'utf8')),before=await data(authorPage);assert.equal(authorBackup.data.version,4);assert.equal(authorBackup.data.inspirationNotes.length,2);assert.equal(authorBackup.data.authorSettings.dailyWordGoal,0);
+    for(let i=0;i<2;i++){await authorPage.locator('#backupFile').setInputFiles({name:'author.json',mimeType:'application/json',buffer:Buffer.from(JSON.stringify(authorBackup))});await mergeBackup(authorPage);assert.equal((await data(authorPage)).inspirationNotes.length,2);assert.equal(sumWords(await data(authorPage)),sumWords(before));assert.equal(sumTime(await data(authorPage)),sumTime(before))}
     await authorPage.locator('[name="clear"][value="inspirationNotes"]').check();await authorPage.locator('#clearDataForm button').click();await authorPage.locator('[data-dialog-result="clear"]').click();assert.equal((await data(authorPage)).inspirationNotes.length,0);assert.equal((await data(authorPage)).works.length,2);assert.equal(sumWords(await data(authorPage)),sumWords(before));
-    await authorPage.locator('#backupFile').setInputFiles({name:'restore.json',mimeType:'application/json',buffer:Buffer.from(JSON.stringify(authorBackup))});await authorPage.locator('[data-dialog-result="merge"]').click();assert.equal((await data(authorPage)).inspirationNotes.length,2);
+    await authorPage.locator('#backupFile').setInputFiles({name:'restore.json',mimeType:'application/json',buffer:Buffer.from(JSON.stringify(authorBackup))});await mergeBackup(authorPage);assert.equal((await data(authorPage)).inspirationNotes.length,2);
   });
   const timerContext=await browser.newContext({timezoneId:'Asia/Shanghai'}),timerPage=await timerContext.newPage();timerPage.on('pageerror',e=>failures.push(e.message));
   await check('browser timer checkpoints, midnight split, idle cutoff and manual resume',async()=>{
@@ -182,7 +167,7 @@ async function verifyNoOverflow(page){assert(await page.evaluate(()=>document.do
   });
   await check('TXT export and notes remain usable when storage is denied and while offline',async()=>{
     await blockedPage.locator('[name="content"]').fill('尚未自动保存的临时中文草稿');const exported=await txtDownload(blockedPage,'[data-action="export-chapter-txt"]');assert(exported.bytes.toString('utf8').includes('尚未自动保存的临时中文草稿'));await blockedPage.locator('#writerNotePanel summary').click();await blockedPage.locator('#writerNotePanel [data-action="new-note"]').click();await blockedPage.locator('[name="noteContent"]').fill('受限存储中的灵感');await blockedPage.locator('[data-dialog-result="ok"]').click();assert.equal((await data(blockedPage)).inspirationNotes.length,1);
-    await authorPage.evaluate(async()=>{await navigator.serviceWorker.ready;if(!navigator.serviceWorker.controller)await new Promise(resolve=>navigator.serviceWorker.addEventListener('controllerchange',resolve,{once:true}))});await authorContext.setOffline(true);await authorPage.goto(base+'?view=author&work=migration-work');await authorPage.locator('[name="content"]').fill('离线创作内容');const offline=await txtDownload(authorPage,'[data-action="export-chapter-txt"]');assert(offline.bytes.toString('utf8').includes('离线创作内容'));await authorPage.locator('#authorTabs [data-tab="notes"]').click();assert.equal(await authorPage.locator('#noteList .note-card').count(),2);await authorContext.setOffline(false);
+    await authorPage.evaluate(async()=>{await navigator.serviceWorker.ready;if(!navigator.serviceWorker.controller)await new Promise(resolve=>navigator.serviceWorker.addEventListener('controllerchange',resolve,{once:true}))});await authorContext.setOffline(true);await authorPage.goto(base+'?view=author&work=migration-work');await authorPage.locator('[name="content"]').fill('离线创作内容');const offline=await txtDownload(authorPage,'[data-action="export-chapter-txt"]');assert(offline.bytes.toString('utf8').includes('离线创作内容'));await authorPage.locator('#authorTabs [data-tab="notes"]').click();await authorPage.locator('#noteList .note-card').first().waitFor();assert.equal(await authorPage.locator('#noteList .note-card').count(),2);await authorContext.setOffline(false);
   });
   await timerContext.close();await authorContext.close();
   await page.goto(base);await acknowledge(page);await page.screenshot({path:path.join(artifacts,'desktop-home.png'),fullPage:true});
