@@ -2,7 +2,7 @@
 (() => {
   'use strict';
   const Store=window.ZhezhiStore, IDLE_MS=120000, SAVE_MS=15000;
-  const recordIds=new Map(),pending=new Map();
+  const recordIds=new Map(),pending=new Map(),inflight=new Set();
   let work=null,running=false,manualPaused=false,lastActivity=0,checkpoint=0,wallCheckpoint=0,lastSaved=0;
   const dayKey=(date=new Date())=>`${date.getFullYear()}-${String(date.getMonth()+1).padStart(2,'0')}-${String(date.getDate()).padStart(2,'0')}`;
   function rowFor(target,day){
@@ -22,34 +22,24 @@
     wallCheckpoint=wall;checkpoint=end;
     if(clock>=lastActivity+IDLE_MS)running=false;
   }
-  function flush(){
-    accrue();
-    if([...pending.values()].some(row=>Math.round(row.durationMs)||row.netWords)){
-      Store.change(data=>{
-        for(const row of pending.values()){
-          const durationMs=Math.round(row.durationMs);
-          if(!durationMs&&!row.netWords)continue;
-          let stored=data.writingRecords.find(r=>r.id===row.id);
-          if(!stored){stored={...row,durationMs:0,netWords:0};data.writingRecords.push(stored)}
-          stored.durationMs+=durationMs;stored.netWords+=row.netWords;stored.workTitle=row.workTitle;stored.updatedAt=new Date().toISOString();
-        }
-      });
-    }
-    pending.clear();
-    lastSaved=performance.now();notify();
+  async function flush(){
+    accrue();const rows=[...pending.values()].filter(row=>Math.round(row.durationMs)||row.netWords);pending.clear();lastSaved=performance.now();
+    if(!rows.length){notify();return}const batch=rows.map(row=>({...row,durationMs:Math.round(row.durationMs)}));inflight.add(batch);
+    try{await Store.change(data=>{for(const row of batch){let stored=data.writingRecords.find(r=>r.id===row.id);if(!stored){stored={...row,durationMs:0,netWords:0};data.writingRecords.push(stored)}stored.durationMs+=row.durationMs;stored.netWords+=row.netWords;stored.workTitle=row.workTitle;stored.updatedAt=new Date().toISOString()}})}
+    finally{inflight.delete(batch);notify()}
   }
   function notify(){window.dispatchEvent(new Event('zhezhi-writing'));}
-  function pause(manual=false){const changed=running||pending.size||manual&&!manualPaused;accrue();running=false;if(manual)manualPaused=true;if(pending.size)flush();else if(changed)notify();}
+  function pause(manual=false){const changed=running||pending.size||manual&&!manualPaused;accrue();running=false;if(manual)manualPaused=true;if(pending.size)return flush();else if(changed)notify();}
   function bind(target){pause();if(work?.id!==target.id)manualPaused=false;work={id:target.id,title:target.title};notify();}
   function activity(){
-    accrue();if(!work||manualPaused||document.hidden)return;
+    accrue();if(!work||manualPaused||document.hidden||!window.ZhezhiCoordination.has(work.id))return;
     const clock=performance.now();
     if(!running){checkpoint=clock;wallCheckpoint=Date.now();lastSaved=clock;running=true}
     lastActivity=clock;notify();
   }
   function togglePause(){if(manualPaused){manualPaused=false;notify()}else pause(true);}
-  function addWords(target,deltas){if(work?.id===target.id)work.title=target.title;for(const row of pending.values())if(row.workId===target.id)row.workTitle=(target.title||'未命名作品').slice(0,40);for(const [day,words] of Object.entries(deltas))if(words)rowFor(target,day).netWords+=words;flush();}
-  function records(){accrue();return [...Store.get().writingRecords,...pending.values()];}
+  function addWords(target,deltas){if(work?.id===target.id)work.title=target.title;for(const row of pending.values())if(row.workId===target.id)row.workTitle=(target.title||'未命名作品').slice(0,40);for(const [day,words] of Object.entries(deltas))if(words)rowFor(target,day).netWords+=words;return flush();}
+  function records(){accrue();return [...Store.get().writingRecords,...pending.values(),...[...inflight].flat()];}
   function summary(filter='',source=records()){
     const today=dayKey(),week=new Date();week.setHours(0,0,0,0);week.setDate(week.getDate()-(week.getDay()+6)%7);
     const first=dayKey(week),result={todayMs:0,weekMs:0,totalMs:0,todayWords:0};

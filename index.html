@@ -10,8 +10,8 @@
   <link rel="manifest" href="./manifest.webmanifest" />
   <link rel="icon" href="./icon.svg" type="image/svg+xml" />
   <title>折纸文学 · 把心事折进故事里</title>
-  <link rel="stylesheet" href="./assets/site.css?v=20261012-copyright1">
-  <link rel="stylesheet" href="./assets/upgrade.css?v=20261012-copyright1">
+  <link rel="stylesheet" href="./assets/site.css?v=20261012-atelier5">
+  <link rel="stylesheet" href="./assets/upgrade.css?v=20261012-atelier5">
 </head>
 <body>
   <div class="ambient"></div><div class="grain"></div><div class="petals" aria-hidden="true"><i class="petal"></i><i class="petal"></i><i class="petal"></i><i class="petal"></i><i class="petal"></i><i class="petal"></i><i class="petal"></i><i class="petal"></i></div>
@@ -35,7 +35,7 @@
         <section class="updates" id="updates"><div class="section-head"><div><div class="section-kicker">freshly folded</div><h2>最近写下的故事</h2></div><span class="more">示例更新记录</span></div><div class="update-list" id="updateList"></div></section>
         <section class="community-band" id="community"><div><h3>故事的另一面，是相遇。</h3><p>去变身嫁人小说吧，和更多喜欢变嫁故事的朋友聊聊。</p></div><a class="solid-button" href="https://tieba.baidu.com/f?kw=%E5%8F%98%E8%BA%AB%E5%AB%81%E4%BA%BA%E5%B0%8F%E8%AF%B4" target="_blank" rel="noopener noreferrer">前往变身嫁人小说吧　↗</a></section>
       </section>
-      <section class="author-view section-hidden" id="author"><div class="section-head"><div><div class="section-kicker">author's atelier · 本地创作</div><h2 tabindex="-1">作者创作空间</h2></div><button class="solid-button" data-action="new-work">＋ 新建作品</button></div><div class="author-intro"><p>把灵感折成一章。作品、便条与写作记录保存在此浏览器，预览不会上传或公开发布。</p><button class="quiet-button" data-action="export">导出 JSON 备份 ↗</button></div><div class="author-stats" id="authorStats"><div><small>今日写作时光</small><strong id="authorTodayTime">0 分 0 秒</strong></div><div><small>今日正文净增</small><strong id="authorTodayWords">0 字</strong></div><div class="daily-goal"><small>每日目标 <button class="quiet-button" data-action="writer-goal">调整</button></small><strong id="authorGoalText">0 / 2,000 字</strong><progress id="authorGoalProgress" max="100" value="0" aria-label="每日写作目标进度"></progress></div></div><nav class="author-tabs" id="authorTabs" aria-label="作者工具"><button class="selected" data-action="author-tab" data-tab="works" aria-pressed="true">我的作品</button><button data-action="author-tab" data-tab="notes" aria-pressed="false">灵感便条</button><button data-action="author-tab" data-tab="records" aria-pressed="false">写作记录</button></nav><div id="authorContent"></div></section>
+      <section class="author-view section-hidden" id="author"><div class="section-head"><div><div class="section-kicker">author's atelier · 本地创作</div><h2 tabindex="-1">作者创作空间</h2></div><button class="solid-button" data-action="new-work">＋ 新建作品</button></div><div class="author-intro"><p>把灵感折成一章。作品、便条与写作记录保存在此浏览器，预览不会上传或公开发布。</p><button class="quiet-button" data-action="export">导出 JSON 备份 ↗</button></div><div data-backup-info id="authorBackupInfo"></div><div class="author-stats" id="authorStats"><div><small>今日写作时光</small><strong id="authorTodayTime">0 分 0 秒</strong></div><div><small>今日正文净增</small><strong id="authorTodayWords">0 字</strong></div><div class="daily-goal"><small>每日目标 <button class="quiet-button" data-action="writer-goal">调整</button></small><strong id="authorGoalText">0 / 2,000 字</strong><progress id="authorGoalProgress" max="100" value="0" aria-label="每日写作目标进度"></progress></div></div><nav class="author-tabs" id="authorTabs" aria-label="作者工具"><button class="selected" data-action="author-tab" data-tab="works" aria-pressed="true">我的作品</button><button data-action="author-tab" data-tab="notes" aria-pressed="false">灵感便条</button><button data-action="author-tab" data-tab="records" aria-pressed="false">写作记录</button></nav><div id="authorContent"></div></section>
       <section class="section-hidden page-panel" id="settingsPage"></section>
       <section class="section-hidden page-panel" id="policyPage"></section>
     </main>
@@ -47,16 +47,20 @@
 
   <section class="book-detail-layer" id="bookDetailLayer" role="dialog" aria-modal="true" aria-label="作品详情"><div class="detail-top"><button class="outline-button" id="closeBookDetail" data-action="close-detail">← 返回书架</button><span>折纸文学 · 作品简介</span></div><main class="detail-main" id="bookDetailContent"></main></section>
   <section class="reader-layer" id="readerLayer" role="dialog" aria-modal="true" aria-label="小说阅读"><div class="reader-top"><button class="outline-button" id="exitReader" data-action="close-reader">← 返回作品简介</button><span>折纸文学 · 阅读时光</span><div class="reader-tools"><button class="reader-tool" data-action="reading-settings" aria-label="阅读设置">⚙</button><button class="reader-tool" id="shareBook" data-action="share" aria-label="分享作品">↗</button><button class="reader-tool" id="fontDown" data-action="font-down" aria-label="缩小字号">A−</button><button class="reader-tool" id="fontUp" data-action="font-up" aria-label="放大字号">A＋</button><button class="reader-tool" id="readingTheme" data-action="theme" aria-label="切换阅读背景">◐</button><button class="icon-button" id="bookmarkBtn" data-action="bookmark" aria-label="收藏">♡</button></div></div><div class="reading-progress" id="readingProgress" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-label="本章阅读进度"><span></span></div><div class="reader-main"><div class="section-kicker">折纸文学 · 演示阅读</div><h1 id="readerTitle"></h1><div class="reader-byline" id="readerByline"></div><div class="reader-navigation"><label for="readerChapterSelect">章节目录<select id="readerChapterSelect"></select></label><span id="readingProgressText">本章 0%</span></div><h2 class="chapter-heading" id="chapterHeading"></h2><article id="readerContent"></article><p class="reader-end" id="readerEnd"></p><div class="reader-controls"><button id="prevChapter" data-action="prev">上一章</button><button id="readerDirectory" data-action="directory">返回目录</button><button id="nextChapter" data-action="next">下一章</button></div><section class="reader-reviews"><h2>读完这一章，留下一点心意</h2><div class="rating-picker" id="ratingPicker" aria-label="作品评分"><button type="button" data-rating="1" aria-label="1 星">☆</button><button type="button" data-rating="2" aria-label="2 星">☆</button><button type="button" data-rating="3" aria-label="3 星">☆</button><button type="button" data-rating="4" aria-label="4 星">☆</button><button type="button" data-rating="5" aria-label="5 星">☆</button><span id="ratingLabel">点击星星评分</span></div><form id="commentForm"><textarea id="commentInput" maxlength="300" aria-label="本地书评" placeholder="写下读后感，仅保存在本机浏览器（最多 300 字）"></textarea><div><small id="commentCount">0 / 300</small><button class="solid-button" type="submit">保存本地书评</button></div></form><div id="commentList" class="comment-list"></div></section></div></section>
-  <script defer src="./novel-data/jinli.js?v=20261012-copyright1"></script>
-  <script defer src="./assets/utils.js?v=20261012-copyright1"></script>
-  <script defer src="./assets/catalog.js?v=20261012-copyright1"></script>
-  <script defer src="./assets/store.js?v=20261012-copyright1"></script>
-  <script defer src="./assets/writer.js?v=20261012-copyright1"></script>
-  <script defer src="./assets/snapshots.js?v=20261012-copyright1"></script>
-  <script defer src="./assets/backup.js?v=20261012-copyright1"></script>
-  <script defer src="./assets/studio.js?v=20261012-copyright1"></script>
-  <script defer src="./assets/author.js?v=20261012-copyright1"></script>
-  <script defer src="./assets/app.js?v=20261012-copyright1"></script>
+  <script defer src="./novel-data/jinli.js?v=20261012-atelier5"></script>
+  <script defer src="./assets/utils.js?v=20261012-atelier5"></script>
+  <script defer src="./assets/catalog.js?v=20261012-atelier5"></script>
+  <script defer src="./assets/coordination.js?v=20261012-atelier5"></script>
+  <script defer src="./assets/store.js?v=20261012-atelier5"></script>
+  <script defer src="./assets/writer.js?v=20261012-atelier5"></script>
+  <script defer src="./assets/snapshots.js?v=20261012-atelier5"></script>
+  <script defer src="./assets/backup-status.js?v=20261012-atelier5"></script>
+  <script defer src="./assets/diff.js?v=20261012-atelier5"></script>
+  <script defer src="./assets/find.js?v=20261012-atelier5"></script>
+  <script defer src="./assets/backup.js?v=20261012-atelier5"></script>
+  <script defer src="./assets/studio.js?v=20261012-atelier5"></script>
+  <script defer src="./assets/author.js?v=20261012-atelier5"></script>
+  <script defer src="./assets/app.js?v=20261012-atelier5"></script>
 
 </body>
 </html>
